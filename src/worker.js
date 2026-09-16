@@ -65,6 +65,7 @@ async function routeApi(request, env, url) {
   if (path === '/users' && method === 'GET') return listUsers(env, user);
   if (path === '/users' && method === 'POST') return createUser(request, env, user);
   if (path.match(/^\/users\/[^/]+$/) && method === 'DELETE') return deactivateUser(path, env, user);
+  if (path === '/me/password' && method === 'POST') return changeOwnPassword(request, env, user);
 
   const collMatch = path.match(/^\/collections\/([a-z]+)(?:\/([^/]+))?$/);
   if (collMatch) {
@@ -218,6 +219,25 @@ async function createUser(request, env, user) {
     return json({ error: 'email_taken' }, 409);
   }
   return json({ id, name, email, role });
+}
+async function changeOwnPassword(request, env, user) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ error: 'invalid_json' }, 400); }
+  const currentPassword = String(body.currentPassword || '');
+  const newPassword = String(body.newPassword || '');
+  if (!currentPassword || newPassword.length < 8) {
+    return json({ error: 'invalid_fields', message: 'current password and an 8+ character new password are required' }, 400);
+  }
+  const ok = await verifyPassword(currentPassword, user.password_salt, user.password_hash);
+  if (!ok) return json({ error: 'invalid_current_password' }, 401);
+  const { hash, salt } = await hashPassword(newPassword, null);
+  await env.DB.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?').bind(hash, salt, user.id).run();
+  // Sign out every other session for this account so a changed password
+  // actually locks out anyone who had the old one, rather than leaving
+  // existing logged-in sessions valid indefinitely.
+  const keepToken = getCookie(request, SESSION_COOKIE);
+  await env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').bind(user.id, keepToken || '').run();
+  return json({ ok: true });
 }
 async function deactivateUser(path, env, user) {
   if (user.role !== 'admin') return json({ error: 'forbidden' }, 403);

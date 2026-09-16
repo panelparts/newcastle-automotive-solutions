@@ -150,12 +150,17 @@ function getCookie(request, name) {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-/* -------- password hashing: PBKDF2-SHA256 via Web Crypto -------- */
+/* -------- password hashing: PBKDF2-SHA256 via Web Crypto --------
+   Cloudflare Workers' PBKDF2 implementation caps iterations at 100,000
+   (deriveBits throws "iteration counts above 100000 are not supported" for
+   anything higher) — 100,000 is the max this runtime allows, so that's
+   what's used here. */
+const PBKDF2_ITERATIONS = 100000;
 async function hashPassword(password, saltHex) {
   const salt = saltHex ? hexToBytes(saltHex) : crypto.getRandomValues(new Uint8Array(16));
   const keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: 120000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
     keyMaterial,
     256
   );

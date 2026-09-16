@@ -266,6 +266,7 @@
   .pill-invoiced{background:var(--st-invoiced-soft);color:var(--st-invoiced);}
   .pill-draft{background:var(--steel-soft);color:var(--steel);}
   .pill-sent{background:var(--st-completed-soft);color:var(--st-completed);}
+  .pill-void{background:var(--danger-soft);color:var(--danger);}
   .pill-queued{background:var(--st-progress-soft);color:var(--st-progress);}
   .badge-type{
     display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;color:var(--ink-soft);
@@ -538,6 +539,7 @@ function fmtMoney(n){
   return '$' + n.toLocaleString('en-AU',{minimumFractionDigits:2, maximumFractionDigits:2});
 }
 function invoiceStatusPill(iv){
+  if(iv.status==='void') return {cls:'void', label:'Void'};
   if(iv.status==='sent') return {cls:'sent', label:'Sent'};
   return {cls:'draft', label:'Draft'};
 }
@@ -1386,6 +1388,7 @@ var state = {
   meId: safeGet('bb_meId') || null,
   modal: null,
   confirmDelete: null,
+  confirmVoid: null,
   timer: null,
   xeroInfoOpen: false,
   xeroStatus: null,
@@ -1826,8 +1829,8 @@ function toast(msg){
 }
 
 /* ===================== modal open/close ===================== */
-function openModal(m){ state.modal = m; state.confirmDelete = null; render(); }
-function closeModal(){ state.modal = null; state.confirmDelete = null; state.invoiceDraft = null; state.customerDraft = null; state.bookingDraft = null; render(); }
+function openModal(m){ state.modal = m; state.confirmDelete = null; state.confirmVoid = null; render(); }
+function closeModal(){ state.modal = null; state.confirmDelete = null; state.confirmVoid = null; state.invoiceDraft = null; state.customerDraft = null; state.bookingDraft = null; render(); }
 
 /* ===================== nav config ===================== */
 var NAV_ITEMS = [
@@ -1924,7 +1927,7 @@ function render(){
     '</div>' +
     tabbarHTML() +
     topActionHTML();
-  mroot.innerHTML = (state.modal ? modalHTML() : '') + (state.confirmDelete ? confirmDeleteModalHTML() : '');
+  mroot.innerHTML = (state.modal ? modalHTML() : '') + (state.confirmDelete ? confirmDeleteModalHTML() : '') + (state.confirmVoid ? confirmVoidModalHTML() : '');
   wirePostRender();
   restoreFormFields(app, snapshot, focusKey, selStart, selEnd);
   restoreFormFields(mroot, snapshot, focusKey, selStart, selEnd);
@@ -2353,7 +2356,7 @@ function idleTimerHTML(){
 
 /* ===================== INVOICING ===================== */
 function invoicingView(){
-  var invoicedIds = state.invoices.map(function(i){ return i.bookingId; });
+  var invoicedIds = state.invoices.filter(function(i){ return i.status!=='void'; }).map(function(i){ return i.bookingId; });
   var ready = state.bookings.filter(function(b){ return b.status==='completed' && invoicedIds.indexOf(b.id)===-1; });
   var sent = state.invoices.slice().sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
 
@@ -2562,6 +2565,23 @@ function confirmDeleteModalHTML(){
   '</div>';
 }
 
+/* ---- void invoice confirmation popup ---- */
+function confirmVoidModalHTML(){
+  var cv = state.confirmVoid;
+  var who = cv.name ? '<strong>'+escapeHtml(cv.name)+'</strong>’s invoice' : 'This invoice';
+  return '<div class="confirm-backdrop" id="confirm-backdrop">' +
+    '<div class="confirm-panel">' +
+      '<div class="confirm-icon">'+ICONS.close+'</div>' +
+      '<h3>Mark this invoice as void?</h3>' +
+      '<p>'+who+' will be marked void here so it no longer counts as sent, and the job can be invoiced again if needed. This only updates this app’s record — it does <strong>not</strong> change or delete anything already sent to Xero.</p>' +
+      '<div class="confirm-actions">' +
+        '<button type="button" class="btn" data-action="cancel-void">Cancel</button>' +
+        '<button type="button" class="btn btn-danger" data-action="confirm-void-invoice" data-id="'+cv.id+'">Yes, mark void</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
 /* ---- time field (plain native time input) ---- */
 function timeFieldHTML(name, label, value){
   return '<div class="field"><label>'+label+'</label>' +
@@ -2632,7 +2652,7 @@ function bookingModalHTML(m){
   if(editing){
     extra += statusStepperHTML(b) + timeTrackingBlockHTML(b);
     if(b.status==='completed'){
-      var hasInvoice = state.invoices.some(function(i){return i.bookingId===b.id;});
+      var hasInvoice = state.invoices.some(function(i){return i.bookingId===b.id && i.status!=='void';});
       extra += '<div>'+(hasInvoice
         ? '<button type="button" class="btn btn-block" data-action="view-invoice-for" data-booking="'+b.id+'">'+ICONS.receipt+' View invoice</button>'
         : '<button type="button" class="btn btn-primary btn-block" data-action="build-invoice" data-booking="'+b.id+'">'+ICONS.receipt+' Create invoice</button>') + '</div>';
@@ -2894,13 +2914,19 @@ function invoiceModalHTML(m){
     var xeroLine = iv.xeroInvoiceNumber
       ? ' · Xero invoice: <a href="'+escapeHtml(iv.xeroInvoiceUrl||'#')+'" target="_blank" rel="noopener" class="mono">'+escapeHtml(iv.xeroInvoiceNumber)+'</a>'
       : ' · Not sent to Xero';
+    var voidNote = iv.status==='void'
+      ? '<div class="helptext" style="margin-top:8px;color:var(--danger)">This invoice is marked void. It no longer counts as sent — the job it came from can be invoiced again if needed. This does not change anything already in Xero.</div>'
+      : '';
     var body = '<div class="card card-pad">' +
       '<div class="row-between"><strong>'+escapeHtml(iv.customerName)+'</strong><span class="pill pill-'+invoiceStatusPill(iv).cls+'">'+invoiceStatusPill(iv).label+'</span></div>' +
       '<div class="helptext" style="margin-top:4px">Job reference: <span class="mono">'+escapeHtml(iv.reference||'—')+'</span>'+xeroLine+'</div>' +
       '<div style="margin-top:10px">'+lines+'</div>' +
       totalsHTML(iv.subtotal, iv.gst, iv.total) +
-    '</div>' + photosBlock;
-    return modalShell('Invoice', body, '<button type="button" class="btn btn-block" data-action="close-modal">Close</button>');
+    '</div>' + photosBlock + voidNote;
+    var voidBtn = iv.status!=='void'
+      ? '<button type="button" class="btn btn-quiet" data-action="ask-void-invoice" data-id="'+iv.id+'">Mark as void</button>'
+      : '';
+    return modalShell('Invoice', body, voidBtn + '<button type="button" class="btn btn-block" data-action="close-modal">Close</button>');
   }
 
   var b = getBooking(m.bookingId);
@@ -3255,8 +3281,25 @@ function handleAction(el){
   }
   if(a==='build-invoice'){ openModal({type:'invoice', id:null, bookingId:el.dataset.booking}); return; }
   if(a==='view-invoice'){ openModal({type:'invoice', id:el.dataset.id}); return; }
+  if(a==='ask-void-invoice'){
+    var ivForVoid = state.invoices.find(function(x){return x.id===el.dataset.id;});
+    state.confirmVoid = {id: el.dataset.id, name: ivForVoid ? ivForVoid.customerName : ''};
+    render(); return;
+  }
+  if(a==='cancel-void'){ state.confirmVoid = null; render(); return; }
+  if(a==='confirm-void-invoice'){
+    var voidId = el.dataset.id;
+    var ivToVoid = state.invoices.find(function(x){return x.id===voidId;});
+    if(ivToVoid){
+      var voided = Object.assign({}, ivToVoid, {status:'void', voidedAt: Date.now()});
+      saveDoc('invoices', voided);
+    }
+    closeModal();
+    toast('Invoice marked void');
+    return;
+  }
   if(a==='view-invoice-for'){
-    var inv = state.invoices.find(function(i){return i.bookingId===el.dataset.booking;});
+    var inv = state.invoices.find(function(i){return i.bookingId===el.dataset.booking && i.status!=='void';});
     openModal({type:'invoice', id: inv?inv.id:null}); return;
   }
   if(a==='toggle-xero-info'){ state.xeroInfoOpen = !state.xeroInfoOpen; render(); return; }
@@ -3753,7 +3796,7 @@ function wirePostRender(){
 
 /* ===================== global listeners (bound once) ===================== */
 document.addEventListener('click', function(e){
-  if(e.target && e.target.id==='confirm-backdrop'){ state.confirmDelete = null; render(); return; }
+  if(e.target && e.target.id==='confirm-backdrop'){ state.confirmDelete = null; state.confirmVoid = null; render(); return; }
   if(e.target && e.target.id==='modal-backdrop'){ closeModal(); return; }
   var el = e.target.closest('[data-action]');
   if(el){ handleAction(el); return; }
@@ -3771,6 +3814,7 @@ document.addEventListener('change', function(e){
 document.addEventListener('keydown', function(e){
   if(e.key!=='Escape') return;
   if(state.confirmDelete){ state.confirmDelete = null; render(); return; }
+  if(state.confirmVoid){ state.confirmVoid = null; render(); return; }
   if(state.modal){ closeModal(); }
 });
 

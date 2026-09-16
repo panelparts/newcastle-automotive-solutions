@@ -7,16 +7,26 @@
  * and R2 (photos), with real staff login (email + password, session
  * cookies) gating everything.
  *
- * Xero: this Worker talks to the existing `nas-xero-connector` Worker
- * server-to-server (a plain HTTPS call, no browser CSP or Claude tooling
- * in the path at all) — see xeroCreateInvoice()/xeroAttachPhoto() below.
- * That's the fix for the "long URL gets rejected" problem the Artifact-based
- * version hit: there is no URL-encoded payload anywhere in this design.
+ * Xero: this Worker talks to the existing `nas-xero-connector` Worker via a
+ * Cloudflare **Service Binding** (env.XERO_WORKER — see wrangler.jsonc),
+ * not a plain fetch() to its public URL. That matters: Cloudflare blocks a
+ * Worker from fetch()-ing another Worker's *.workers.dev address directly
+ * (Cloudflare error 1042 — a loop-prevention rule, not a config mistake),
+ * so the original plain-fetch design could never have worked on the free
+ * workers.dev domain both Workers run on here. A service binding calls the
+ * other Worker's fetch() handler directly inside Cloudflare's network,
+ * bypassing that restriction entirely (and it's the officially-recommended
+ * way to do Worker-to-Worker calls in the same account regardless). The one
+ * exception is the "Connect to Xero" button, which still needs the
+ * connector's real public URL (XERO_WORKER_URL) because that one has to be
+ * a full-page browser redirect, not a server-to-server call.
  *
  * Required bindings (see DEPLOY.md):
  *   D1 database        DB
  *   R2 bucket          PHOTOS
- *   var                XERO_WORKER_URL   (the nas-xero-connector Worker's URL)
+ *   service binding    XERO_WORKER   → the nas-xero-connector Worker
+ *   var                XERO_WORKER_URL   (nas-xero-connector's public URL —
+ *                       only used for the OAuth "Connect to Xero" redirect)
  *   secret             XERO_INTERNAL_TOKEN  (must equal TASK_TOKEN on that
  *                       Worker — see DEPLOY.md; this is what lets this
  *                       backend create invoices / attach photos / disconnect
@@ -375,7 +385,7 @@ async function servePhoto(path, env) {
 async function xeroProxy(env, path, method) {
   const headers = {};
   if (method === 'POST') headers.Authorization = 'Bearer ' + env.XERO_INTERNAL_TOKEN;
-  const res = await fetch(env.XERO_WORKER_URL + path, { method, headers });
+  const res = await env.XERO_WORKER.fetch('https://xero-worker.internal' + path, { method, headers });
   const body = await res.text();
   return new Response(body, { status: res.status, headers: { 'Content-Type': 'application/json' } });
 }
@@ -400,7 +410,7 @@ async function sendInvoiceToXero(id, env) {
   };
   let xeroRes, xeroBody;
   try {
-    xeroRes = await fetch(env.XERO_WORKER_URL + '/invoices', {
+    xeroRes = await env.XERO_WORKER.fetch('https://xero-worker.internal/invoices', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -447,8 +457,8 @@ async function attachPhotoToXero(env, xeroInvoiceId, photoId, filename) {
   const obj = await env.PHOTOS.get(row.r2_key);
   if (!obj) return false;
   try {
-    const res = await fetch(
-      env.XERO_WORKER_URL + '/internal/invoices/' + encodeURIComponent(xeroInvoiceId) + '/attachments/' + encodeURIComponent(filename),
+    const res = await env.XERO_WORKER.fetch(
+      'https://xero-worker.internal/internal/invoices/' + encodeURIComponent(xeroInvoiceId) + '/attachments/' + encodeURIComponent(filename),
       {
         method: 'PUT',
         headers: {

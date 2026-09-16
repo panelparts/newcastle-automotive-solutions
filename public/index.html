@@ -2346,6 +2346,13 @@ function accountView(){
         '<div><strong>'+escapeHtml(me.name||'')+'</strong><div class="helptext">'+escapeHtml(me.email||'')+' · '+(me.role==='admin'?'Admin':'Staff')+'</div></div>' +
         '<button type="button" class="btn btn-sm" data-action="sign-out">Sign out</button>' +
       '</div>' +
+      '<div class="section-sub" style="margin-top:16px">Change password</div>' +
+      '<form data-form="change-password" style="margin-top:8px;display:flex;flex-direction:column;gap:8px">' +
+        '<div class="field"><label>Current password</label><input type="password" name="currentPassword" autocomplete="current-password" required></div>' +
+        '<div class="field"><label>New password</label><input type="password" name="newPassword" autocomplete="new-password" minlength="8" required placeholder="8+ characters"></div>' +
+        '<div id="change-password-error" class="helptext" style="color:var(--danger);display:none"></div>' +
+        '<button type="submit" class="btn btn-sm">Update password</button>' +
+      '</form>' +
     '</div>';
 
   var usersCard = '';
@@ -2358,7 +2365,7 @@ function accountView(){
     }).join('');
     usersCard = '<div class="card card-pad" style="margin-top:14px">' +
         '<div class="section-sub">Staff logins</div>' +
-        '<div class="helptext" style="margin-top:2px">Everyone who uses the app needs their own login. Give each person their email and temporary password — they can\'t change it themselves yet, so pick something you\'re happy to share directly.</div>' +
+        '<div class="helptext" style="margin-top:2px">Everyone who uses the app needs their own login. Give each person their email and a temporary password — they can change it themselves from Account once they sign in.</div>' +
         '<div style="margin-top:8px">'+(rows||'<div class="helptext">No logins yet.</div>')+'</div>' +
         '<form data-form="new-user" style="margin-top:12px;display:flex;flex-direction:column;gap:8px">' +
           '<div class="field-row"><div class="field"><label>Name</label><input type="text" name="name" required></div><div class="field"><label>Email</label><input type="email" name="email" required></div></div>' +
@@ -3343,6 +3350,22 @@ function handleFormSubmit(form){
         else { toast('Could not add that login'); }
       })
       .catch(function(){ toast('Could not add that login'); });
+    return;
+  }
+  if(type==='change-password'){
+    var errEl = document.getElementById('change-password-error');
+    if(errEl){ errEl.style.display='none'; }
+    var pwBody = { currentPassword: fd.get('currentPassword')||'', newPassword: fd.get('newPassword')||'' };
+    fetch('/api/me/password', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(pwBody)})
+      .then(function(r){ return r.json().then(function(data){ return {ok:r.ok, data:data}; }); })
+      .then(function(res){
+        if(res.ok){ toast('Password updated'); form.reset(); }
+        else if(errEl){
+          errEl.textContent = (res.data && res.data.error==='invalid_current_password') ? 'Current password is incorrect.' : 'Could not update password — check the new password is at least 8 characters.';
+          errEl.style.display = 'block';
+        }
+      })
+      .catch(function(){ if(errEl){ errEl.textContent='Could not reach the server — check your connection.'; errEl.style.display='block'; } });
     return;
   }
   if(type==='booking'){

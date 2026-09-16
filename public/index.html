@@ -1671,7 +1671,7 @@ function subscribeAll(){
       return; // keep showing local sample data until seeding lands
     }
     state.staff = rows;
-    render();
+    backgroundRender();
     subscribeRest();
   }, function(e){ console.warn('staff sub error', e); });
 }
@@ -1684,38 +1684,38 @@ function subscribeRest(){
     var rows = snap.docs.map(function(d){ return d.data(); });
     var doc = rows.find(function(r){ return r.id==='company'; });
     if(doc) state.settings = Object.assign({}, DEFAULT_SETTINGS, doc);
-    render();
+    backgroundRender();
   }, function(e){ console.warn('settings sub error', e); });
   db.collection('bookings').onSnapshot(function(snap){
     state.bookings = snap.docs.map(function(d){ return d.data(); });
-    render();
+    backgroundRender();
   }, function(e){ console.warn('bookings sub error', e); });
 
   db.collection('timeEntries').onSnapshot(function(snap){
     state.timeEntries = snap.docs.map(function(d){ return d.data(); });
-    render();
+    backgroundRender();
   }, function(e){ console.warn('timeEntries sub error', e); });
 
   db.collection('invoices').onSnapshot(function(snap){
     state.invoices = snap.docs.map(function(d){ return d.data(); });
-    render();
+    backgroundRender();
   }, function(e){ console.warn('invoices sub error', e); });
 
   db.collection('customers').onSnapshot(function(snap){
     state.customers = snap.docs.map(function(d){ return d.data(); });
-    render();
+    backgroundRender();
   }, function(e){ console.warn('customers sub error', e); });
 
   db.collection('services').onSnapshot(function(snap){
     var rows = snap.docs.map(function(d){ return d.data(); });
     if(rows.length) state.services = rows;
-    render();
+    backgroundRender();
   }, function(e){ console.warn('services sub error', e); });
 
   db.collection('products').onSnapshot(function(snap){
     var rows = snap.docs.map(function(d){ return d.data(); });
     if(rows.length) state.products = rows;
-    render();
+    backgroundRender();
   }, function(e){ console.warn('products sub error', e); });
 }
 
@@ -1858,6 +1858,43 @@ function render(){
   mroot.innerHTML = (state.modal ? modalHTML() : '') + (state.confirmDelete ? confirmDeleteModalHTML() : '');
   wirePostRender();
 }
+
+/* Background data refreshes (the 4-second polling in subscribeAll/subscribeRest,
+   below) used to call render() directly — which rebuilds the whole page from
+   scratch via innerHTML. That's fine most of the time, but it also wipes out
+   whatever someone is mid-way through typing (reported: "the password just
+   disappears" while typing on Your account) — the freshly-rebuilt input has
+   no memory of what was typed a moment ago, since nothing echoes it back into
+   a value="..." attribute. backgroundRender() is the same render(), except it
+   waits if the cursor is currently in a text field, and catches up the moment
+   focus leaves that field. Anything triggered by an explicit user action
+   (clicking Save, opening a modal, submitting a form, etc.) still calls
+   render() directly and always applies immediately — only the passive
+   background polling defers. */
+var backgroundRenderPending = false;
+function isEditingTextField(){
+  var el = document.activeElement;
+  if(!el) return false;
+  if(el.tagName==='TEXTAREA') return true;
+  if(el.tagName==='INPUT'){
+    var t = (el.getAttribute('type')||'text').toLowerCase();
+    return ['text','email','password','tel','number','search','url'].indexOf(t)!==-1;
+  }
+  return false;
+}
+function backgroundRender(){
+  if(isEditingTextField()){ backgroundRenderPending = true; return; }
+  render();
+}
+document.addEventListener('focusout', function(e){
+  if(!backgroundRenderPending) return;
+  var t = e.target;
+  if(t && (t.tagName==='INPUT' || t.tagName==='TEXTAREA')){
+    backgroundRenderPending = false;
+    render();
+  }
+});
+
 function topActionHTML(){
   if(state.view!=='schedule' && state.view!=='jobs') return '';
   return '<button class="top-action" data-action="new-booking">'+ICONS.plus+'<span>New booking</span></button>';

@@ -1906,6 +1906,16 @@ function render(){
     focusKey = (activeForm ? (activeForm.getAttribute('data-form')||activeForm.id||'') : '') + '::' + active.name;
     if(typeof active.selectionStart==='number'){ selStart = active.selectionStart; selEnd = active.selectionEnd; }
   }
+  // Same problem as the form-field values above, one level up: rebuilding
+  // #main-scroll and the modal panel from scratch resets their scroll
+  // position to 0 every time, which is what made a form "jump back to the
+  // top" the moment a background poll re-rendered while someone was
+  // scrolled down filling it in. Save each scrollable container's
+  // scrollTop before the rebuild and put it straight back after.
+  var prevMainScroll = document.getElementById('main-scroll');
+  var mainScrollTop = prevMainScroll ? prevMainScroll.scrollTop : 0;
+  var prevModalPanel = mroot.querySelector('.modal-panel');
+  var modalScrollTop = prevModalPanel ? prevModalPanel.scrollTop : 0;
   app.innerHTML =
     topbarHTML() +
     '<div class="layout">' +
@@ -1918,6 +1928,10 @@ function render(){
   wirePostRender();
   restoreFormFields(app, snapshot, focusKey, selStart, selEnd);
   restoreFormFields(mroot, snapshot, focusKey, selStart, selEnd);
+  var newMainScroll = document.getElementById('main-scroll');
+  if(newMainScroll) newMainScroll.scrollTop = mainScrollTop;
+  var newModalPanel = mroot.querySelector('.modal-panel');
+  if(newModalPanel) newModalPanel.scrollTop = modalScrollTop;
 }
 
 /* On top of the value-preserving render() above, background data refreshes

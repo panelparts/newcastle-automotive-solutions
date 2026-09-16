@@ -67,7 +67,7 @@ async function routeApi(request, env, url) {
   if (path.match(/^\/users\/[^/]+$/) && method === 'DELETE') return deactivateUser(path, env, user);
   if (path === '/me/password' && method === 'POST') return changeOwnPassword(request, env, user);
 
-  const collMatch = path.match(/^\/collections\/([a-z]+)(?:\/([^/]+))?$/);
+  const collMatch = path.match(/^\/collections\/([a-zA-Z]+)(?:\/([^/]+))?$/);
   if (collMatch) {
     const [, coll, id] = collMatch;
     if (!COLLECTIONS[coll]) return json({ error: 'unknown_collection' }, 404);

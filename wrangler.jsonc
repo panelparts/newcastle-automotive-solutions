@@ -16,7 +16,9 @@
   "r2_buckets": [
     { "binding": "PHOTOS", "bucket_name": "newcastle-automotive-solutions-photos" }
   ],
-  "vars": {
+  "vars":"services": [
+  { "binding": "XERO_WORKER", "service": "nas-xero-connector" }
+] {
     "XERO_WORKER_URL": "https://nas-xero-connector.nas-newcastle.workers.dev"
   }
 }

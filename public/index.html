@@ -1844,8 +1844,68 @@ var NAV_ITEMS = [
 var VIEW_TITLES = {schedule:'Schedule', jobs:'Jobs', customers:'Customers', time:'Time Tracking', invoicing:'Invoicing', services:'Services', products:'Products', staff:'Staff', account:'Account'};
 
 /* ===================== render: shell ===================== */
+/* render() rebuilds the whole page from scratch via innerHTML every time it's
+   called (many times a minute, thanks to the background polling below). A
+   plain <input>/<textarea> whose value isn't echoed back into the HTML via a
+   value="..." attribute has no memory of what was typed into it a moment ago
+   — the old DOM node is simply thrown away and a blank one takes its place.
+   That was the direct cause of two reported bugs: text disappearing while
+   typing (mid-render, from a poll tick) and, after a first attempt at fixing
+   that by deferring renders until focus leaves the field, text disappearing
+   the instant you clicked off a field instead (the deferred render finally
+   fired on blur, and still had nothing to restore the just-typed value from).
+   The real fix is here: capture every form field's current value (and which
+   one has focus, and its cursor position) from the DOM immediately before
+   tearing it down, then write those same values back onto the freshly-built
+   DOM immediately after — regardless of what triggered the render. Fields are
+   matched by their enclosing form's data-form (or id) plus their name, so a
+   value only gets restored into the same field it came from. */
+function snapshotFormFields(root){
+  var out = {};
+  if(!root) return out;
+  var els = root.querySelectorAll('input[name], textarea[name], select[name]');
+  for(var i=0;i<els.length;i++){
+    var el = els[i];
+    var form = el.closest('form');
+    var key = (form ? (form.getAttribute('data-form')||form.id||'') : '') + '::' + el.name;
+    if(el.type==='checkbox' || el.type==='radio'){
+      out[key] = { checked: el.checked };
+    } else {
+      out[key] = { value: el.value };
+    }
+  }
+  return out;
+}
+function restoreFormFields(root, snapshot, focusKey, selStart, selEnd){
+  if(!root || !snapshot) return;
+  var els = root.querySelectorAll('input[name], textarea[name], select[name]');
+  for(var i=0;i<els.length;i++){
+    var el = els[i];
+    var form = el.closest('form');
+    var key = (form ? (form.getAttribute('data-form')||form.id||'') : '') + '::' + el.name;
+    var saved = snapshot[key];
+    if(!saved) continue;
+    if(saved.checked!==undefined) el.checked = saved.checked;
+    else el.value = saved.value;
+    if(key===focusKey){
+      el.focus();
+      if(selStart!=null && typeof el.setSelectionRange==='function'){
+        try{ el.setSelectionRange(selStart, selEnd); }catch(e){}
+      }
+    }
+  }
+}
 function render(){
   var app = document.getElementById('app');
+  var mroot = document.getElementById('modal-root');
+  var snapshot = Object.assign({}, snapshotFormFields(app), snapshotFormFields(mroot));
+  var active = document.activeElement;
+  var focusKey = null, selStart = null, selEnd = null;
+  if(active && active.name && (app.contains(active) || mroot.contains(active))){
+    var activeForm = active.closest('form');
+    focusKey = (activeForm ? (activeForm.getAttribute('data-form')||activeForm.id||'') : '') + '::' + active.name;
+    if(typeof active.selectionStart==='number'){ selStart = active.selectionStart; selEnd = active.selectionEnd; }
+  }
   app.innerHTML =
     topbarHTML() +
     '<div class="layout">' +
@@ -1854,22 +1914,21 @@ function render(){
     '</div>' +
     tabbarHTML() +
     topActionHTML();
-  var mroot = document.getElementById('modal-root');
   mroot.innerHTML = (state.modal ? modalHTML() : '') + (state.confirmDelete ? confirmDeleteModalHTML() : '');
   wirePostRender();
+  restoreFormFields(app, snapshot, focusKey, selStart, selEnd);
+  restoreFormFields(mroot, snapshot, focusKey, selStart, selEnd);
 }
 
-/* Background data refreshes (the 4-second polling in subscribeAll/subscribeRest,
-   below) used to call render() directly — which rebuilds the whole page from
-   scratch via innerHTML. That's fine most of the time, but it also wipes out
-   whatever someone is mid-way through typing (reported: "the password just
-   disappears" while typing on Your account) — the freshly-rebuilt input has
-   no memory of what was typed a moment ago, since nothing echoes it back into
-   a value="..." attribute. backgroundRender() is the same render(), except it
-   waits if the cursor is currently in a text field, and catches up the moment
-   focus leaves that field. Anything triggered by an explicit user action
-   (clicking Save, opening a modal, submitting a form, etc.) still calls
-   render() directly and always applies immediately — only the passive
+/* On top of the value-preserving render() above, background data refreshes
+   (the 4-second polling in subscribeAll/subscribeRest, below) still avoid
+   rebuilding the DOM out from under an active keystroke where possible —
+   render() is now safe to call at any time, but rebuilding mid-keystroke can
+   still make an on-screen keyboard blip on some phones. backgroundRender()
+   waits if the cursor is currently in a text field, and catches up the
+   moment focus leaves that field. Anything triggered by an explicit user
+   action (clicking Save, opening a modal, submitting a form, etc.) still
+   calls render() directly and always applies immediately — only the passive
    background polling defers. */
 var backgroundRenderPending = false;
 function isEditingTextField(){

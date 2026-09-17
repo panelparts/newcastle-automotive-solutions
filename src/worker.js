@@ -135,6 +135,14 @@ async function routeApi(request, env, url) {
     return sendInvoiceToXero(id, env);
   }
 
+  // One-off data-recovery route (2026-09-17) — see restoreCatalogPrices()
+  // below for why this exists. Admin-only; safe to leave in and safe to
+  // call more than once (it always sets the same known-correct numbers).
+  if (path === '/internal/restore-catalog-prices' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: 'forbidden' }, 403);
+    return restoreCatalogPrices(env);
+  }
+
   return json({ error: 'not_found' }, 404);
 }
 
@@ -335,8 +343,13 @@ const COLLECTIONS = {
   },
   timeEntries: {
     table: 'time_entries',
-    toRow: (d) => ({ id: d.id, booking_id: d.bookingId || '', staff_id: d.staffId || '', minutes: Number(d.minutes) || 0, item_id: d.itemId || null, note: d.note || '', date: d.date || '', created_at: d.createdAt || Date.now() }),
-    toDoc: (r) => ({ id: r.id, bookingId: r.booking_id, staffId: r.staff_id, minutes: r.minutes, itemId: r.item_id, note: r.note, date: r.date, createdAt: r.created_at }),
+    // billable: whether this time counts toward the job's auto Labour line on
+    // an invoice, vs. being logged for the record only (the "Bill this time"
+    // checkbox on the Stop timer dialog — see unlinkedMinutesFor() in
+    // public/index.html). Defaults true so entries that predate this field
+    // keep behaving exactly as they did before.
+    toRow: (d) => ({ id: d.id, booking_id: d.bookingId || '', staff_id: d.staffId || '', minutes: Number(d.minutes) || 0, item_id: d.itemId || null, note: d.note || '', date: d.date || '', billable: d.billable === false ? 0 : 1, created_at: d.createdAt || Date.now() }),
+    toDoc: (r) => ({ id: r.id, bookingId: r.booking_id, staffId: r.staff_id, minutes: r.minutes, itemId: r.item_id, note: r.note, date: r.date, billable: r.billable == null ? true : !!r.billable, createdAt: r.created_at }),
   },
   invoices: {
     table: 'invoices',
@@ -356,13 +369,21 @@ const COLLECTIONS = {
   },
   services: {
     table: 'services',
-    toRow: (d) => ({ id: d.id, code: d.code || '', name: d.name || '', sales_description: d.salesDescription || '', sales_price: Number(d.salesPrice) || 0, cost_price: Number(d.costPrice) || 0, tax_rate: d.taxRate || '', standard_time_minutes: d.standardTimeMinutes != null ? Number(d.standardTimeMinutes) : null, active: d.active === false ? 0 : 1 }),
-    toDoc: (r) => ({ id: r.id, code: r.code, name: r.name, salesDescription: r.sales_description, salesPrice: r.sales_price, costPrice: r.cost_price, taxRate: r.tax_rate, standardTimeMinutes: r.standard_time_minutes, active: !!r.active }),
+    // Field names here MUST match what public/index.html actually sends/reads
+    // (salesUnitPrice / purchasesUnitPrice / durationMins / status), not a
+    // "cleaner" renamed version — see the doc comment above this block. This
+    // was wrong before (salesPrice/costPrice/active/standardTimeMinutes),
+    // which silently zeroed sales/cost price on every single save and made
+    // the frontend's own active/archived + standard-time fields no-ops.
+    toRow: (d) => ({ id: d.id, code: d.code || '', name: d.name || '', sales_description: d.salesDescription || '', sales_price: Number(d.salesUnitPrice) || 0, cost_price: d.purchasesUnitPrice != null ? Number(d.purchasesUnitPrice) : null, tax_rate: d.taxRate || '', standard_time_minutes: d.durationMins != null ? Number(d.durationMins) : null, active: d.status === 'Archived' ? 0 : 1 }),
+    toDoc: (r) => ({ id: r.id, code: r.code, name: r.name, salesDescription: r.sales_description, salesUnitPrice: r.sales_price, purchasesUnitPrice: r.cost_price, taxRate: r.tax_rate, durationMins: r.standard_time_minutes, status: r.active ? 'Active' : 'Archived' }),
   },
   products: {
     table: 'products',
-    toRow: (d) => ({ id: d.id, code: d.code || '', name: d.name || '', sales_description: d.salesDescription || '', sales_price: Number(d.salesPrice) || 0, cost_price: Number(d.costPrice) || 0, tax_rate: d.taxRate || '', qty_in_stock: d.qtyInStock != null ? Number(d.qtyInStock) : null, active: d.active === false ? 0 : 1 }),
-    toDoc: (r) => ({ id: r.id, code: r.code, name: r.name, salesDescription: r.sales_description, salesPrice: r.sales_price, costPrice: r.cost_price, taxRate: r.tax_rate, qtyInStock: r.qty_in_stock, active: !!r.active }),
+    // Same field-name fix as services above — matches public/index.html's
+    // salesUnitPrice / purchasesUnitPrice / quantity / status exactly.
+    toRow: (d) => ({ id: d.id, code: d.code || '', name: d.name || '', sales_description: d.salesDescription || '', sales_price: Number(d.salesUnitPrice) || 0, cost_price: d.purchasesUnitPrice != null ? Number(d.purchasesUnitPrice) : null, tax_rate: d.taxRate || '', qty_in_stock: d.quantity != null ? Number(d.quantity) : null, active: d.status === 'Archived' ? 0 : 1 }),
+    toDoc: (r) => ({ id: r.id, code: r.code, name: r.name, salesDescription: r.sales_description, salesUnitPrice: r.sales_price, purchasesUnitPrice: r.cost_price, taxRate: r.tax_rate, quantity: r.qty_in_stock, status: r.active ? 'Active' : 'Archived' }),
   },
   settings: {
     table: 'settings',
@@ -394,6 +415,35 @@ async function deleteCollection(coll, id, env) {
   const def = COLLECTIONS[coll];
   await env.DB.prepare(`DELETE FROM ${def.table} WHERE id = ?`).bind(id).run();
   return json({ ok: true });
+}
+
+/* ---- one-off price recovery (2026-09-17) ----
+ * COLLECTIONS.services/products above used to read the wrong doc field names
+ * (salesPrice/costPrice instead of the app's real salesUnitPrice/
+ * purchasesUnitPrice) — every save, including the very first time this
+ * database was seeded, silently wrote 0 into sales_price/cost_price. That
+ * mapping bug is fixed now, but it can't undo rows that were already
+ * overwritten. RESTORE_PRICES is exactly the salesUnitPrice/purchasesUnitPrice
+ * pair for each of the original 36 services + 24 products, taken from the
+ * same Xero inventory export (InventoryItems20260903.csv) this app was first
+ * seeded from — [id, salesPrice, costPrice-or-null]. Only sales_price/
+ * cost_price are touched; code/name/description/tax rate/active are left
+ * exactly as they are now, so anything edited since isn't overwritten. */
+const RESTORE_PRICES = {
+  services: [['svc-adas-both',485.0,null],['svc-adas-both-terr-koul',550.0,null],['svc-adas-dynamic',265.0,null],['svc-adas-dynamic-terr-koul',395.0,null],['svc-adas-static',385.0,null],['svc-adas-static-terr-koul',395.0,null],['svc-batt-remove',175.0,null],['svc-brk-f',175.0,null],['svc-brk-r',175.0,null],['svc-disc-10',0.0,null],['svc-disc-30',0.0,null],['svc-el',9.5,null],['svc-ev-de-power-re-power-service',175.0,null],['svc-hire',0.0,0.0],['svc-lab',175.0,null],['svc-lab-hire',60.0,null],['svc-labour',80.0,0.0],['svc-late-fee',55.0,null],['svc-manufacturer-genuine-info',65.0,55.0],['svc-note',0.0,null],['svc-press',65.0,null],['svc-prog',395.0,null],['svc-programming-radar',365.0,null],['svc-rear-diff',175.0,0.0],['svc-rego',120.0,null],['svc-report',440.0,null],['svc-scan',135.0,null],['svc-scan-check',175.0,0.0],['svc-service',150.0,0.0],['svc-stolen',650.0,null],['svc-subframe',175.0,null],['svc-susp-4wd-l-h-f',650.0,null],['svc-susp-4wd-r-h-f',650.0,null],['svc-susp-l-h-f',495.0,null],['svc-susp-r-h-f',495.0,null],['svc-travel',1.0,null]],
+  products: [['prod-75w85',30.0,22.0],['prod-75w85-fs',70.0,37.67],['prod-80w90',25.0,20.35],['prod-adblue',110.0,100.0],['prod-brake-fuid',19.0,13.5],['prod-cable',45.0,0.0],['prod-cons',12.0,2.0],['prod-coolant',12.0,7.0],['prod-cvt-fluid',110.0,73.97],['prod-dex-3',32.5,25.0],['prod-eng-oil',25.0,18.92],['prod-engine',6200.0,5000.0],['prod-fuel-diesel',1.95,1.9],['prod-fuel-unleaded',20.0,20.0],['prod-fuse',10.0,0.0],['prod-fuse-connector',20.0,15.19],['prod-h11',106.95,31.95],['prod-h7',45.0,34.5],['prod-harness',20.0,13.99],['prod-led-light',100.0,19.95],['prod-oil-filter',15.0,3.3],['prod-plug',5.5,0.22],['prod-spw',1.5,0.35],['prod-tubing',15.0,0.0]],
+};
+async function restoreCatalogPrices(env) {
+  const stmts = [];
+  for (const [id, salesPrice, costPrice] of RESTORE_PRICES.services) {
+    stmts.push(env.DB.prepare('UPDATE services SET sales_price = ?, cost_price = ? WHERE id = ?').bind(salesPrice, costPrice, id));
+  }
+  for (const [id, salesPrice, costPrice] of RESTORE_PRICES.products) {
+    stmts.push(env.DB.prepare('UPDATE products SET sales_price = ?, cost_price = ? WHERE id = ?').bind(salesPrice, costPrice, id));
+  }
+  const results = await env.DB.batch(stmts);
+  const changed = results.reduce((sum, r) => sum + (r.meta && r.meta.changes ? r.meta.changes : 0), 0);
+  return json({ ok: true, servicesUpdated: RESTORE_PRICES.services.length, productsUpdated: RESTORE_PRICES.products.length, rowsChanged: changed });
 }
 
 /* ============================ photos (R2) ============================ */

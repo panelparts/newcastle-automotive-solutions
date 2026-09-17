@@ -21,6 +21,24 @@
  * connector's real public URL (XERO_WORKER_URL) because that one has to be
  * a full-page browser redirect, not a server-to-server call.
  *
+ * Two-way Xero sync: the connector also pushes back the other direction now
+ * — when an invoice is voided, deleted, or paid *in Xero itself*, Xero calls
+ * the connector's /webhook endpoint, which looks up that invoice and calls
+ * this Worker's POST /api/internal/xero-invoice-status with the result. That
+ * route is authenticated with its own shared secret (WEBHOOK_FORWARD_TOKEN)
+ * rather than a session cookie, since the caller is the connector Worker,
+ * not a signed-in browser — see receiveXeroInvoiceStatus() below and
+ * DEPLOY.md "Part 4B" for the one-time setup this needs in Xero's developer
+ * portal.
+ *
+ * Customers also sync two ways with Xero Contacts now (added 2026-09-16, to
+ * stop customers getting duplicated in Xero): every customer save here also
+ * pushes to/links a Xero contact (syncCustomerToXero()), and an edit made to
+ * that contact in Xero flows back via the same webhook mechanism (POST
+ * /api/internal/xero-contact-update, handled by receiveXeroContactUpdate()).
+ * Policy on a conflict: the app wins — see the doc comment above those two
+ * functions for exactly how.
+ *
  * Required bindings (see DEPLOY.md):
  *   D1 database        DB
  *   R2 bucket          PHOTOS
@@ -32,6 +50,9 @@
  *                       backend create invoices / attach photos / disconnect
  *                       Xero without anyone else who finds the connector's
  *                       URL being able to do the same)
+ *   secret             WEBHOOK_FORWARD_TOKEN  (must equal APP_WEBHOOK_FORWARD_TOKEN
+ *                       on the connector Worker — authenticates the reverse,
+ *                       Xero-changed-something-so-tell-the-app direction)
  *
  * Session tokens are random 32-byte values stored in D1 (sessions table)
  * with an expiry — there is no separate signing secret to configure.
@@ -68,6 +89,11 @@ async function routeApi(request, env, url) {
   if (path === '/logout' && method === 'POST') return handleLogout(request, env);
   if (path === '/me' && method === 'GET') return handleMe(request, env);
 
+  // Called by the Xero connector Worker, not a browser — its own shared-secret
+  // check stands in for the session check every other route below needs.
+  if (path === '/internal/xero-invoice-status' && method === 'POST') return receiveXeroInvoiceStatus(request, env);
+  if (path === '/internal/xero-contact-update' && method === 'POST') return receiveXeroContactUpdate(request, env);
+
   // Everything else requires a signed-in session.
   const user = await getSessionUser(request, env);
   if (!user) return json({ error: 'unauthorized' }, 401);
@@ -82,7 +108,18 @@ async function routeApi(request, env, url) {
     const [, coll, id] = collMatch;
     if (!COLLECTIONS[coll]) return json({ error: 'unknown_collection' }, 404);
     if (method === 'GET' && !id) return listCollection(coll, env);
-    if (method === 'PUT' && id) return upsertCollection(coll, id, request, env);
+    if (method === 'PUT' && id) {
+      const result = await upsertCollection(coll, id, request, env);
+      if (coll === 'customers') {
+        // Best-effort, fire-and-forget-but-awaited: a customer save always
+        // succeeds locally even if Xero is unreachable right now — this just
+        // links/updates the matching Xero contact when it can. See "Customers
+        // <-> Xero" below for why this lives here rather than in
+        // upsertCollection() itself (that stays fully generic).
+        try { await syncCustomerToXero(env, id); } catch (err) { /* retried on next save */ }
+      }
+      return result;
+    }
     if (method === 'DELETE' && id) return deleteCollection(coll, id, env);
   }
 
@@ -272,8 +309,13 @@ const COLLECTIONS = {
   },
   customers: {
     table: 'customers',
-    toRow: (d) => ({ id: d.id, name: d.name, phone: d.phone || '', email: d.email || '', address: d.address || '', notes: d.notes || '', vehicles_json: JSON.stringify(d.vehicles || []), created_at: d.createdAt || Date.now() }),
-    toDoc: (r) => ({ id: r.id, name: r.name, phone: r.phone, email: r.email, address: r.address, notes: r.notes, vehicles: JSON.parse(r.vehicles_json || '[]'), createdAt: r.created_at }),
+    // xero_contact_id / updated_at power the two-way Xero contact sync (see
+    // syncCustomerToXero() / receiveXeroContactUpdate() below) — updated_at
+    // is always stamped fresh here (not doc-controlled) so it reflects the
+    // true last app-side write time, which is what "app wins on conflict"
+    // is compared against.
+    toRow: (d) => ({ id: d.id, name: d.name, phone: d.phone || '', email: d.email || '', address: d.address || '', notes: d.notes || '', vehicles_json: JSON.stringify(d.vehicles || []), created_at: d.createdAt || Date.now(), xero_contact_id: d.xeroContactId || null, updated_at: Date.now() }),
+    toDoc: (r) => ({ id: r.id, name: r.name, phone: r.phone, email: r.email, address: r.address, notes: r.notes, vehicles: JSON.parse(r.vehicles_json || '[]'), createdAt: r.created_at, xeroContactId: r.xero_contact_id, updatedAt: r.updated_at }),
   },
   bookings: {
     table: 'bookings',
@@ -449,6 +491,102 @@ async function sendInvoiceToXero(id, env) {
 
   const updatedRow = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
   return json({ ok: true, invoice: def.toDoc(updatedRow) });
+}
+
+/* ============================ Customers <-> Xero ============================ */
+/* Two-way sync, added 2026-09-16 at the user's request, to stop customers
+   getting duplicated in Xero. Policy: "app wins" on a conflict — a customer
+   edited in the app always overwrites Xero on the next save, and an
+   incoming Xero-side edit is only applied here if it's newer than this
+   app's own last save (compared via customers.updated_at, stamped fresh on
+   every app-side write — see COLLECTIONS.customers.toRow above). A brand
+   new Xero contact is never auto-imported as a customer (only a contact
+   already linked to one of our customers gets pulled), so Xero contacts for
+   suppliers or other payees don't pollute the customer list. */
+
+async function syncCustomerToXero(env, customerId) {
+  const row = await env.DB.prepare('SELECT * FROM customers WHERE id = ?').bind(customerId).first();
+  if (!row) return;
+  const payload = { contactId: row.xero_contact_id || null, name: row.name, email: row.email || '', phone: row.phone || '', address: row.address || '' };
+  let res, body;
+  try {
+    res = await env.XERO_WORKER.fetch('https://xero-worker.internal/contacts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + env.XERO_INTERNAL_TOKEN },
+      body: JSON.stringify(payload),
+    });
+    body = await res.json();
+  } catch (err) {
+    return; // Xero/connector unreachable right now — the next customer save retries this
+  }
+  if (res.ok && body.ok && body.contactId && body.contactId !== row.xero_contact_id) {
+    await env.DB.prepare('UPDATE customers SET xero_contact_id = ? WHERE id = ?').bind(body.contactId, customerId).run();
+  }
+}
+
+/**
+ * Receives the "this contact changed in Xero" relay from the connector
+ * Worker's /webhook handler. Only ever updates a customer already linked to
+ * this Xero contact (never creates a new one) and only if the app's own
+ * copy isn't newer — see the policy note above.
+ */
+async function receiveXeroContactUpdate(request, env) {
+  const auth = request.headers.get('Authorization') || '';
+  const token = auth.replace(/^Bearer\s+/i, '');
+  if (!env.WEBHOOK_FORWARD_TOKEN || token !== env.WEBHOOK_FORWARD_TOKEN) {
+    return json({ error: 'unauthorized' }, 401);
+  }
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ error: 'invalid_json' }, 400); }
+  const xeroContactId = String(body.xeroContactId || '');
+  if (!xeroContactId) return json({ error: 'missing_fields' }, 400);
+
+  const row = await env.DB.prepare('SELECT * FROM customers WHERE xero_contact_id = ?').bind(xeroContactId).first();
+  if (!row) return json({ ok: true, matched: false }); // not linked to any customer here — app-wins policy: never auto-import
+
+  const xeroUpdatedAt = body.xeroUpdatedAt ? new Date(body.xeroUpdatedAt).getTime() : 0;
+  if (row.updated_at && xeroUpdatedAt && row.updated_at >= xeroUpdatedAt) {
+    return json({ ok: true, matched: true, skipped: 'app_newer' }); // app wins — this app-side edit came after Xero's
+  }
+
+  await env.DB.prepare(
+    'UPDATE customers SET name = ?, email = ?, phone = ?, address = ?, updated_at = ? WHERE id = ?'
+  ).bind(body.name || row.name, body.email || '', body.phone || '', body.address || '', xeroUpdatedAt || Date.now(), row.id).run();
+  return json({ ok: true, matched: true, updated: true });
+}
+
+/**
+ * Receives the "this invoice changed in Xero" relay from the connector
+ * Worker's /webhook handler (see the doc comment at the top of this file).
+ * Maps Xero's own Status values onto this app's much smaller status set:
+ * VOIDED/DELETED both become this app's 'void' (see the "Mark as void"
+ * feature — this is the automatic version of the same thing), and PAID
+ * becomes 'paid'. AUTHORISED/SUBMITTED/DRAFT on the Xero side don't need any
+ * change here — this app's own 'sent' already covers all of those.
+ */
+async function receiveXeroInvoiceStatus(request, env) {
+  const auth = request.headers.get('Authorization') || '';
+  const token = auth.replace(/^Bearer\s+/i, '');
+  if (!env.WEBHOOK_FORWARD_TOKEN || token !== env.WEBHOOK_FORWARD_TOKEN) {
+    return json({ error: 'unauthorized' }, 401);
+  }
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ error: 'invalid_json' }, 400); }
+  const xeroInvoiceId = String(body.xeroInvoiceId || '');
+  const xeroStatus = String(body.xeroStatus || '').toUpperCase();
+  if (!xeroInvoiceId || !xeroStatus) return json({ error: 'missing_fields' }, 400);
+
+  const row = await env.DB.prepare('SELECT * FROM invoices WHERE xero_invoice_id = ?').bind(xeroInvoiceId).first();
+  if (!row) return json({ ok: true, matched: false }); // not (yet) one of ours — nothing to do
+
+  let newStatus = null;
+  if (xeroStatus === 'VOIDED' || xeroStatus === 'DELETED') newStatus = 'void';
+  else if (xeroStatus === 'PAID') newStatus = 'paid';
+
+  if (newStatus && newStatus !== row.status) {
+    await env.DB.prepare('UPDATE invoices SET status = ? WHERE id = ?').bind(newStatus, row.id).run();
+  }
+  return json({ ok: true, matched: true, status: newStatus || row.status });
 }
 
 async function attachPhotoToXero(env, xeroInvoiceId, photoId, filename) {

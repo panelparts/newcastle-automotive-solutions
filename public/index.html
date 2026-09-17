@@ -1969,21 +1969,48 @@ function isEditingTextField(){
     // background rebuild mid-pick closes it out from under the user just like
     // Bug 5 did for SELECT (reported as "the time menu closes before you can
     // set a time" on the booking form's Start/End time fields).
-    // 'file' included for the same reason again (Bug 9): tapping "Add photo"
-    // on iOS opens the native photo-library sheet, which can stay open for a
-    // while as someone browses their camera roll. If a background poll
-    // rebuilds the DOM while that sheet is open, the <input type="file"> node
-    // it's tied to gets replaced/detached, so the 'change' event carrying the
-    // picked photos never reaches our document-level listener once the user
-    // finishes picking — the upload silently never happens. Deferring the
-    // rebuild for as long as the file input has focus (same mechanism as
-    // SELECT/date/time above) avoids that.
-    return ['text','email','password','tel','number','search','url','date','time','datetime-local','month','week','file'].indexOf(t)!==-1;
+    return ['text','email','password','tel','number','search','url','date','time','datetime-local','month','week'].indexOf(t)!==-1;
   }
   return false;
 }
+// Bug 9 (photos not attaching from iPhone), attempt 2. Attempt 1 added
+// 'file' to isEditingTextField()'s whitelist above, on the theory that
+// document.activeElement stays on the <input type="file"> while iOS's
+// native photo-picker sheet is open — same mechanism that already worked
+// for SELECT/date/time. The user reported it still didn't work ("Still
+// not attaching images"), which means that assumption doesn't hold for
+// file inputs: iOS Safari does not reliably keep the file input as
+// document.activeElement while the sheet is up (unlike a native <select>
+// or date/time wheel, the photo-library sheet isn't tied to focus the
+// same way), so isEditingTextField() never caught it and a background
+// poll was free to rebuild #modal-root — and with it, detach the file
+// input — while the user was still browsing their camera roll.
+//
+// Fix: track "the photo sheet might be open" explicitly, from the tap
+// that opens it, instead of inferring it from focus. filePickerOpen is
+// set the instant a file input is clicked (that click always fires
+// before the OS sheet appears) and cleared either when the resulting
+// 'change' event lands (handleChange's invoice-photo-input branch) or,
+// as a fallback for "user cancelled without picking anything" — which
+// fires no 'change' event — a short delay after the browser window
+// regains focus.
+var filePickerOpen = false;
+document.addEventListener('click', function(e){
+  var fi = e.target.closest && e.target.closest('input[type="file"]');
+  if(fi) filePickerOpen = true;
+});
+window.addEventListener('focus', function(){
+  if(!filePickerOpen) return;
+  // Give any 'change' event from a completed pick a moment to arrive (and
+  // run addInvoicePhotos) before we treat the sheet as closed — order
+  // between window 'focus' and the input's 'change' isn't guaranteed.
+  setTimeout(function(){
+    filePickerOpen = false;
+    if(backgroundRenderPending){ backgroundRenderPending = false; render(); }
+  }, 500);
+});
 function backgroundRender(){
-  if(isEditingTextField()){ backgroundRenderPending = true; return; }
+  if(isEditingTextField() || filePickerOpen){ backgroundRenderPending = true; return; }
   render();
 }
 document.addEventListener('focusout', function(e){
@@ -3776,6 +3803,7 @@ function handleChange(el){
     render();
   }
   if(el.dataset.change==='invoice-photo-input'){
+    filePickerOpen = false;
     var files = Array.prototype.slice.call(el.files||[]);
     el.value = '';
     addInvoicePhotos(files);

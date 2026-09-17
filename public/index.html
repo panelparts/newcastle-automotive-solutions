@@ -1457,8 +1457,12 @@ function minutesForItem(bookingId, itemId){
   if(!itemId) return 0;
   return timeEntriesFor(bookingId).filter(function(t){ return t.itemId===itemId; }).reduce(function(a,t){ return a+t.minutes; },0);
 }
+// Only unlinked AND billable time turns into the invoice's auto Labour line —
+// see the "Bill this time" checkbox on the Stop timer dialog. t.billable is
+// treated as true when absent (entries logged before that checkbox existed)
+// so nothing already-billed silently drops off an invoice.
 function unlinkedMinutesFor(bookingId){
-  return timeEntriesFor(bookingId).filter(function(t){ return !t.itemId; }).reduce(function(a,t){ return a+t.minutes; },0);
+  return timeEntriesFor(bookingId).filter(function(t){ return !t.itemId && t.billable!==false; }).reduce(function(a,t){ return a+t.minutes; },0);
 }
 function bookingItemLabel(b, itemId){
   if(!itemId || !b || !b.serviceItems) return null;
@@ -1965,7 +1969,16 @@ function isEditingTextField(){
     // background rebuild mid-pick closes it out from under the user just like
     // Bug 5 did for SELECT (reported as "the time menu closes before you can
     // set a time" on the booking form's Start/End time fields).
-    return ['text','email','password','tel','number','search','url','date','time','datetime-local','month','week'].indexOf(t)!==-1;
+    // 'file' included for the same reason again (Bug 9): tapping "Add photo"
+    // on iOS opens the native photo-library sheet, which can stay open for a
+    // while as someone browses their camera roll. If a background poll
+    // rebuilds the DOM while that sheet is open, the <input type="file"> node
+    // it's tied to gets replaced/detached, so the 'change' event carrying the
+    // picked photos never reaches our document-level listener once the user
+    // finishes picking — the upload silently never happens. Deferring the
+    // rebuild for as long as the file input has focus (same mechanism as
+    // SELECT/date/time above) avoids that.
+    return ['text','email','password','tel','number','search','url','date','time','datetime-local','month','week','file'].indexOf(t)!==-1;
   }
   return false;
 }
@@ -2780,7 +2793,11 @@ function timeTrackingBlockHTML(b){
   var unlinked = unlinkedMinutesFor(b.id);
   var rows = entries.length ? entries.map(function(t){
     var itemName = bookingItemLabel(b, t.itemId);
-    return '<div class="te-row"><span class="te-desc">'+escapeHtml(staffName(t.staffId))+(itemName?' · '+escapeHtml(itemName):'')+(t.note?' · '+escapeHtml(t.note):'')+'</span>' +
+    // Item-linked time never hits the auto Labour line either way (that's
+    // the point of linking it), so only unlinked, explicitly-not-billable
+    // time gets the "not billed" tag — it's the one case that's easy to miss.
+    var notBilled = (!t.itemId && t.billable===false) ? ' <span class="helptext">(not billed)</span>' : '';
+    return '<div class="te-row"><span class="te-desc">'+escapeHtml(staffName(t.staffId))+(itemName?' · '+escapeHtml(itemName):'')+(t.note?' · '+escapeHtml(t.note):'')+notBilled+'</span>' +
       '<span style="display:flex;align-items:center;gap:8px"><span class="te-dur">'+fmtHrsMin(t.minutes)+'</span>' +
       '<button type="button" class="icon-btn" style="width:24px;height:24px" data-action="delete-time" data-id="'+t.id+'">'+ICONS.close+'</button></span></div>';
   }).join('') : '<div class="helptext">No time logged yet.</div>';
@@ -3270,6 +3287,8 @@ function stopTimerModalHTML(){
       '<div class="field"><label>Adjust minutes if needed</label><input type="number" name="minutes" min="1" value="'+mins+'"></div>' +
       '<div class="field"><label>Job item (optional)</label><select name="itemId">'+itemOptionsHTML(b)+'</select></div>' +
       '<div class="field"><label>Note</label><input type="text" name="note" placeholder="What did you do?"></div>' +
+      '<label class="check-row"><input type="checkbox" name="billable" checked> Bill this time to the invoice</label>' +
+      '<div class="helptext" style="margin-top:2px">On: counts toward the job\'s auto Labour line. Off: this time is still logged and shown on the job, but won\'t add anything to the invoice — use this for time you just want a record of.</div>' +
       '<button type="submit" style="display:none"></button>' +
     '</form>';
   return modalShell('Stop timer', body, '<button type="button" class="btn" data-action="discard-timer">Discard</button><button type="submit" form="finish-timer-form" class="btn btn-primary btn-block">Log time</button>');
@@ -3740,7 +3759,7 @@ function handleFormSubmit(form){
     var t = state.timer;
     if(!t) return;
     var finMin = Number(fd.get('minutes'))||1;
-    var fte = {id: uid('t'), bookingId: t.bookingId, staffId: t.staffId, date: todayISO(), minutes: finMin, note: fd.get('note'), itemId: fd.get('itemId')||null, createdAt: Date.now()};
+    var fte = {id: uid('t'), bookingId: t.bookingId, staffId: t.staffId, date: todayISO(), minutes: finMin, note: fd.get('note'), itemId: fd.get('itemId')||null, billable: fd.get('billable')==='on', createdAt: Date.now()};
     saveDoc('timeEntries', fte);
     state.timer = null; safeSet('bb_timer','');
     closeModal();

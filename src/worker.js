@@ -332,13 +332,17 @@ const COLLECTIONS = {
       job_type: d.jobType || '', reference: d.reference || '', customer_id: d.customerId || null,
       customer_json: JSON.stringify(d.customer || {}), vehicle_json: JSON.stringify(d.vehicle || {}),
       address: d.address || '', rate: Number(d.rate) || 0, notes: d.notes || '',
-      service_items_json: JSON.stringify(d.serviceItems || []), status: d.status || 'booked', created_at: d.createdAt || Date.now(),
+      service_items_json: JSON.stringify(d.serviceItems || []),
+      photos_json: JSON.stringify(d.photos || []),
+      status: d.status || 'booked', created_at: d.createdAt || Date.now(),
     }),
     toDoc: (r) => ({
       id: r.id, date: r.date, start: r.start, end: r.end, staffId: r.staff_id, jobType: r.job_type,
       reference: r.reference, customerId: r.customer_id, customer: JSON.parse(r.customer_json || '{}'),
       vehicle: JSON.parse(r.vehicle_json || '{}'), address: r.address, rate: r.rate, notes: r.notes,
-      serviceItems: JSON.parse(r.service_items_json || '[]'), status: r.status, createdAt: r.created_at,
+      serviceItems: JSON.parse(r.service_items_json || '[]'),
+      photos: JSON.parse(r.photos_json || '[]'),
+      status: r.status, createdAt: r.created_at,
     }),
   },
   timeEntries: {
@@ -526,21 +530,36 @@ async function sendInvoiceToXero(id, env) {
   // Attach any photos synchronously too — straight from R2, no chunking or
   // URL tricks needed since this Worker is talking to the Xero connector
   // directly.
-  const photosAttached = [];
-  for (let i = 0; i < doc.photos.length; i++) {
-    const p = doc.photos[i];
-    if (!p.assetId && !p.photoId) continue; // nothing stored for this one
+  //
+  // Every photo in doc.photos is kept in the rewritten list below (2026-09-17
+  // fix) — the previous version only kept photos that had an assetId, so any
+  // photo that failed to upload to R2 in the first place (no assetId at all)
+  // silently vanished from the invoice's own saved record the moment it was
+  // sent, on top of never reaching Xero. Now every photo keeps its place;
+  // ones with nothing to attach just get xeroAttached:false, xeroAttachError
+  // set to why.
+  const photoErrors = [];
+  const photosAttached = doc.photos.map((p, i) => ({ p, i }));
+  for (const { p, i } of photosAttached) {
     const photoId = p.photoId || p.assetId;
-    const attached = await attachPhotoToXero(env, xeroBody.invoiceId, photoId, 'photo-' + (i + 1) + '.jpg');
-    photosAttached.push(Object.assign({}, p, { xeroAttached: attached }));
+    if (!photoId) {
+      p.xeroAttached = false;
+      p.xeroAttachError = 'never_uploaded';
+      photoErrors.push('photo ' + (i + 1) + ': never finished uploading');
+      continue;
+    }
+    const result = await attachPhotoToXero(env, xeroBody.invoiceId, photoId, 'photo-' + (i + 1) + '.jpg');
+    p.xeroAttached = result.ok;
+    p.xeroAttachError = result.ok ? null : result.error;
+    if (!result.ok) photoErrors.push('photo ' + (i + 1) + ': ' + result.error);
   }
-  if (photosAttached.length) {
+  if (doc.photos.length) {
     await env.DB.prepare('UPDATE invoices SET photos_json = ?, photos_pending = 0 WHERE id = ?')
-      .bind(JSON.stringify(photosAttached), id).run();
+      .bind(JSON.stringify(doc.photos), id).run();
   }
 
   const updatedRow = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
-  return json({ ok: true, invoice: def.toDoc(updatedRow) });
+  return json({ ok: true, invoice: def.toDoc(updatedRow), photoErrors: photoErrors.length ? photoErrors : undefined });
 }
 
 /* ============================ Customers <-> Xero ============================ */
@@ -639,11 +658,20 @@ async function receiveXeroInvoiceStatus(request, env) {
   return json({ ok: true, matched: true, status: newStatus || row.status });
 }
 
+// Returns {ok, error} instead of a plain boolean (2026-09-17) — the previous
+// version collapsed every failure reason (missing photo row, missing R2
+// object, the connector/Xero rejecting the PUT, a network error) into a bare
+// `false`, so when the user reported photos never showing up on the actual
+// Xero invoice there was nothing in this app to point at why. The real cause
+// turned out to be a missing OAuth scope (see the SCOPES comment in
+// xero-worker/worker.js) — Xero's Attachments API was silently 403-ing every
+// call — but that fix only helps *future* connections; this change makes the
+// next failure (of any kind) visible instead of silent.
 async function attachPhotoToXero(env, xeroInvoiceId, photoId, filename) {
   const row = await env.DB.prepare('SELECT * FROM photos WHERE id = ?').bind(photoId).first();
-  if (!row) return false;
+  if (!row) return { ok: false, error: 'photo_row_missing' };
   const obj = await env.PHOTOS.get(row.r2_key);
-  if (!obj) return false;
+  if (!obj) return { ok: false, error: 'r2_object_missing' };
   try {
     const res = await env.XERO_WORKER.fetch(
       'https://xero-worker.internal/internal/invoices/' + encodeURIComponent(xeroInvoiceId) + '/attachments/' + encodeURIComponent(filename),
@@ -656,9 +684,11 @@ async function attachPhotoToXero(env, xeroInvoiceId, photoId, filename) {
         body: obj.body,
       }
     );
-    return res.ok;
+    if (res.ok) return { ok: true, error: null };
+    const detail = await res.text().catch(() => '');
+    return { ok: false, error: (detail || ('http_' + res.status)).slice(0, 300) };
   } catch (err) {
-    return false;
+    return { ok: false, error: String((err && err.message) || err).slice(0, 300) };
   }
 }
 

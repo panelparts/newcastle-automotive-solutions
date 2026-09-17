@@ -2660,7 +2660,7 @@ function bookingModalHTML(m){
   var b = editing ? getBooking(m.id) : null;
   var draftKey = b ? b.id : 'new';
   if(!state.bookingDraft || state.bookingDraft.key !== draftKey){
-    state.bookingDraft = {key: draftKey, serviceItems: (b && b.serviceItems) ? b.serviceItems.slice() : []};
+    state.bookingDraft = {key: draftKey, serviceItems: (b && b.serviceItems) ? b.serviceItems.slice() : [], photos: (b && b.photos) ? b.photos.slice() : []};
   }
   var prefillDate = (m.prefill && m.prefill.date) || state.selectedDate;
   var staffOptions = state.staff.filter(function(s){return s.active;}).map(function(s){
@@ -2701,6 +2701,9 @@ function bookingModalHTML(m){
     '<label class="check-row"><input type="checkbox" name="saveVehicle"> Also save this vehicle to the customer\'s record</label>' +
     '<div class="field"><label>Job address</label><input type="text" name="address" value="'+(b?escapeHtml(b.address):'')+'" required></div>' +
     '<div class="field"><label>Hourly rate ($/hr, ex GST)</label><input type="number" name="rate" min="0" step="5" value="'+(b?b.rate:state.settings.labourRate)+'" required></div>' +
+    '<div class="section-sub" style="margin-top:10px">Photos</div>' +
+    '<div class="helptext" style="margin-top:2px">Snap before/after shots, damage, or calibration certificates on the job — they carry through automatically when this job is invoiced.</div>' +
+    '<div class="photo-grid" id="booking-photos-block" style="margin-top:8px">'+bookingPhotosHTML(state.bookingDraft.photos)+'</div>' +
     '<div class="field"><label>Notes</label><textarea name="notes">'+(b?escapeHtml(b.notes||''):'')+'</textarea></div>' +
     '<button type="submit" style="display:none"></button>' +
   '</form>';
@@ -3049,7 +3052,12 @@ function invoiceModalHTML(m){
     var presetLines = (b.serviceItems||[]).map(function(it){
       return {desc: it.desc || it.name, qty:1, unitPrice: it.price||0, itemId: it.id};
     });
-    state.invoiceDraft = {bookingId:b.id, extraLines: presetLines, photos: [], photoUploads: []};
+    // Photos the technician already attached on the booking itself (the
+    // Photos section on the booking form) start the invoice's photo set —
+    // copied, not shared, so removing one here doesn't touch what's saved on
+    // the booking. Capped the same way addInvoicePhotos caps additions here.
+    var presetPhotos = (b.photos||[]).slice(0, INVOICE_PHOTO_MAX);
+    state.invoiceDraft = {bookingId:b.id, extraLines: presetLines, photos: presetPhotos, photoUploads: []};
   }
   var unlinkedMins = unlinkedMinutesFor(b.id);
   var laborAmt = (unlinkedMins/60) * b.rate;
@@ -3087,7 +3095,7 @@ function invoiceModalHTML(m){
     '</div>' +
     '<div class="card card-pad">' +
       '<div class="section-sub">Photos</div>' +
-      '<div class="helptext" style="margin-top:2px">Before/after shots, damage, or calibration certificates — attached to this invoice.</div>' +
+      '<div class="helptext" style="margin-top:2px">Any photos already added on the booking are included automatically — add more here if needed.</div>' +
       '<div class="photo-grid" id="invoice-photos-block" style="margin-top:8px">'+invoicePhotosHTML(state.invoiceDraft.photos, true, 'draft')+'</div>' +
     '</div>' +
     '<div class="helptext">'+((state.xeroStatus && state.xeroStatus.connected) ?
@@ -3193,6 +3201,55 @@ async function addInvoicePhotos(fileList){
   }
   var block = document.getElementById('invoice-photos-block');
   if(block) block.innerHTML = invoicePhotosHTML(state.invoiceDraft.photos, true, 'draft');
+  if(added) toast(added>1 ? added+' photos added' : 'Photo added');
+  else toast('Could not read that image');
+}
+/* Photos attached directly on a booking (added 2026-09-17, at the user's
+   request, so a technician can snap photos on the job itself rather than
+   waiting until the invoice is built later). Same storage/compression path
+   as invoice photos (resizeImageFile/uploadPhotoAsset, same INVOICE_PHOTO_MAX
+   cap) — kept as separate functions rather than sharing invoicePhotosHTML/
+   addInvoicePhotos because those are hard-wired to state.invoiceDraft.
+   Booking photos are carried over as a starting set when "Build invoice" is
+   opened for that booking (see buildInvoiceModal's state.invoiceDraft init)
+   — after that they're independent copies, so removing one from the
+   invoice draft doesn't touch what's saved on the booking, and vice versa. */
+function bookingPhotosHTML(photos){
+  photos = photos || [];
+  var thumbs = photos.map(function(p,i){
+    return '<div class="photo-thumb" data-action="view-photo" data-scope="booking-draft" data-idx="'+i+'">' +
+      '<img src="'+p.dataUrl+'" alt="Job photo">' +
+      '<button type="button" class="photo-thumb-remove" data-action="remove-booking-photo" data-idx="'+i+'">'+ICONS.close+'</button>' +
+    '</div>';
+  }).join('');
+  var addBtn = '';
+  if(photos.length < INVOICE_PHOTO_MAX){
+    addBtn = '<label class="photo-add-btn">'+ICONS.plus+'<span>Add photo</span>' +
+      '<input type="file" accept="image/*" multiple data-change="booking-photo-input" style="display:none"></label>';
+  }
+  return thumbs + addBtn;
+}
+async function addBookingPhotos(fileList){
+  if(!state.bookingDraft) return;
+  if(!state.bookingDraft.photos) state.bookingDraft.photos = [];
+  var files = Array.prototype.filter.call(fileList, function(f){ return f.type.indexOf('image/')===0; });
+  if(!files.length){ toast('Please choose an image file'); return; }
+  var room = INVOICE_PHOTO_MAX - state.bookingDraft.photos.length;
+  if(room<=0){ toast('Up to '+INVOICE_PHOTO_MAX+' photos per job'); return; }
+  if(files.length>room) files = files.slice(0, room);
+  var added = 0;
+  for(var i=0;i<files.length;i++){
+    try{
+      var result = await resizeImageFile(files[i], 1280, 0.6);
+      var photo = {id: uid('ph'), dataUrl: result.dataUrl, assetId: null, assetUrl: null};
+      state.bookingDraft.photos.push(photo);
+      added++;
+      if(!state.bookingDraft.photoUploads) state.bookingDraft.photoUploads = [];
+      state.bookingDraft.photoUploads.push(uploadPhotoAsset(photo, result.blob));
+    }catch(e){ console.warn('photo add failed', e); }
+  }
+  var block = document.getElementById('booking-photos-block');
+  if(block) block.innerHTML = bookingPhotosHTML(state.bookingDraft.photos);
   if(added) toast(added>1 ? added+' photos added' : 'Photo added');
   else toast('Could not read that image');
 }
@@ -3503,11 +3560,21 @@ function handleAction(el){
     if(phBlock) phBlock.innerHTML = invoicePhotosHTML(state.invoiceDraft.photos, true, 'draft');
     return;
   }
+  if(a==='remove-booking-photo'){
+    var bpIdx = Number(el.dataset.idx);
+    if(state.bookingDraft && state.bookingDraft.photos) state.bookingDraft.photos.splice(bpIdx,1);
+    var bpBlock = document.getElementById('booking-photos-block');
+    if(bpBlock) bpBlock.innerHTML = bookingPhotosHTML(state.bookingDraft ? state.bookingDraft.photos : []);
+    return;
+  }
   if(a==='view-photo'){
     var photoSrc = null;
     if(el.dataset.scope==='draft'){
       var dp = state.invoiceDraft && state.invoiceDraft.photos[Number(el.dataset.idx)];
       photoSrc = dp ? dp.dataUrl : null;
+    } else if(el.dataset.scope==='booking-draft'){
+      var bp = state.bookingDraft && state.bookingDraft.photos && state.bookingDraft.photos[Number(el.dataset.idx)];
+      photoSrc = bp ? bp.dataUrl : null;
     } else {
       var ivp = state.invoices.find(function(x){return x.id===el.dataset.inv;});
       var sp = ivp && ivp.photos && ivp.photos[Number(el.dataset.idx)];
@@ -3582,7 +3649,16 @@ async function finalizeInvoice(bookingId, send){
       saveDoc('bookings', updatedBooking);
       localMutate('invoices', data.invoice);
       render();
-      toast('Sent to Xero as draft invoice '+(data.invoice.xeroInvoiceNumber||''));
+      // 2026-09-17: previously said nothing about photos at all, even if
+      // every single one failed to attach in Xero (a real, silent gap — see
+      // the "photos not getting to Xero" note in the rebuild log). Now the
+      // backend reports exactly which photos didn't make it and why
+      // (data.photoErrors), surfaced here instead of a plain success toast.
+      if(data.photoErrors && data.photoErrors.length){
+        toast('Sent to Xero as draft invoice '+(data.invoice.xeroInvoiceNumber||'')+' — but '+data.photoErrors.length+' photo(s) did not attach. Check the invoice in Xero, and see Account → Xero connection.');
+      } else {
+        toast('Sent to Xero as draft invoice '+(data.invoice.xeroInvoiceNumber||''));
+      }
     } else {
       toast('Could not send to Xero — '+xeroErrorMessage(data && data.detail)+'. Saved as a local draft.');
     }
@@ -3670,22 +3746,34 @@ function handleFormSubmit(form){
       saveDoc('customers', newCust);
       customerId = newCust.id;
     }
-    var obj = {
-      id: id,
-      date: fd.get('date'), start: fd.get('start'), end: fd.get('end'),
-      staffId: fd.get('staffId'), jobType: fd.get('jobType'), reference: typedRef,
-      customerId: customerId,
-      customer: {name: typedName, phone: typedPhone},
-      vehicle: {rego: typedRego, makeModel: typedMakeModel},
-      address: typedAddress, rate: Number(fd.get('rate'))||0,
-      notes: fd.get('notes'),
-      serviceItems: state.bookingDraft ? state.bookingDraft.serviceItems : [],
-      status: existing ? existing.status : 'booked',
-      createdAt: existing ? existing.createdAt : Date.now()
+    var bookingDraftAtSubmit = state.bookingDraft;
+    var saveBooking = async function(){
+      // Give any photo added moments before "Save booking" a chance to finish
+      // uploading (see addBookingPhotos) so the saved record has real
+      // assetUrls ready for whenever this job is invoiced — same reasoning as
+      // finalizeInvoice() does for invoice photos.
+      if(bookingDraftAtSubmit && bookingDraftAtSubmit.photoUploads && bookingDraftAtSubmit.photoUploads.length){
+        try{ await Promise.all(bookingDraftAtSubmit.photoUploads); }catch(e){}
+      }
+      var obj = {
+        id: id,
+        date: fd.get('date'), start: fd.get('start'), end: fd.get('end'),
+        staffId: fd.get('staffId'), jobType: fd.get('jobType'), reference: typedRef,
+        customerId: customerId,
+        customer: {name: typedName, phone: typedPhone},
+        vehicle: {rego: typedRego, makeModel: typedMakeModel},
+        address: typedAddress, rate: Number(fd.get('rate'))||0,
+        notes: fd.get('notes'),
+        serviceItems: bookingDraftAtSubmit ? bookingDraftAtSubmit.serviceItems : [],
+        photos: bookingDraftAtSubmit ? bookingDraftAtSubmit.photos : [],
+        status: existing ? existing.status : 'booked',
+        createdAt: existing ? existing.createdAt : Date.now()
+      };
+      saveDoc('bookings', obj);
+      closeModal();
+      toast(existing ? 'Booking updated' : 'Booking created');
     };
-    saveDoc('bookings', obj);
-    closeModal();
-    toast(existing ? 'Booking updated' : 'Booking created');
+    saveBooking();
     return;
   }
   if(type==='staff'){
@@ -3807,6 +3895,12 @@ function handleChange(el){
     var files = Array.prototype.slice.call(el.files||[]);
     el.value = '';
     addInvoicePhotos(files);
+  }
+  if(el.dataset.change==='booking-photo-input'){
+    filePickerOpen = false;
+    var bfiles = Array.prototype.slice.call(el.files||[]);
+    el.value = '';
+    addBookingPhotos(bfiles);
   }
 }
 

@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS customers (
   address TEXT,
   notes TEXT,
   vehicles_json TEXT NOT NULL DEFAULT '[]',
-  created_at INTEGER
+  created_at INTEGER,
+  xero_contact_id TEXT,   -- links this customer to a Xero Contact once synced — see "Customers <-> Xero" in src/worker.js
+  updated_at INTEGER      -- stamped on every app-side save; used to decide "app wins" against an incoming Xero webhook update
 );
 
 CREATE TABLE IF NOT EXISTS bookings (
@@ -73,6 +75,7 @@ CREATE TABLE IF NOT EXISTS time_entries (
   item_id TEXT,
   note TEXT,
   date TEXT,
+  billable INTEGER NOT NULL DEFAULT 1,  -- 0 = logged for the record only, doesn't add to the invoice's Labour line
   created_at INTEGER
 );
 
@@ -87,7 +90,7 @@ CREATE TABLE IF NOT EXISTS invoices (
   total REAL DEFAULT 0,
   photos_json TEXT NOT NULL DEFAULT '[]',
   photos_pending INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'draft',   -- 'draft' | 'sent'  (no 'queued' needed anymore — sending is synchronous)
+  status TEXT NOT NULL DEFAULT 'draft',   -- 'draft' | 'sent' | 'void' | 'paid'  (no 'queued' needed anymore — sending is synchronous; 'void'/'paid' can be set by hand via "Mark as void" or automatically by the Xero webhook sync — see src/worker.js)
   created_at INTEGER,
   sent_at INTEGER,
   xero_invoice_id TEXT,

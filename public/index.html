@@ -1960,7 +1960,12 @@ function isEditingTextField(){
   if(el.tagName==='SELECT') return true;
   if(el.tagName==='INPUT'){
     var t = (el.getAttribute('type')||'text').toLowerCase();
-    return ['text','email','password','tel','number','search','url'].indexOf(t)!==-1;
+    // 'date'/'time' included: on iOS these open a native wheel-picker overlay
+    // tied to that exact input node, same as a SELECT's dropdown above — a
+    // background rebuild mid-pick closes it out from under the user just like
+    // Bug 5 did for SELECT (reported as "the time menu closes before you can
+    // set a time" on the booking form's Start/End time fields).
+    return ['text','email','password','tel','number','search','url','date','time','datetime-local','month','week'].indexOf(t)!==-1;
   }
   return false;
 }
@@ -2710,10 +2715,12 @@ function bookingServiceItemsHTML(){
 // doesn't show the suggestion dropdown for <datalist> at all — so on iPhone the
 // field looked like it had no items to select. This renders the matches as a
 // plain tappable list instead (same pattern as the invoice service/product
-// picker), which works the same on touch and desktop.
+// picker), which works the same on touch and desktop. With an empty search it
+// shows the *whole* catalog (serviceMatches treats an empty query as "matches
+// everything") so tapping into the field works like browsing a dropdown, not
+// just a search box you have to already know the name to use.
 function bookingServiceResultsHTML(q){
   q = q || '';
-  if(!q.trim()) return '';
   var already = (state.bookingDraft && state.bookingDraft.serviceItems) || [];
   var list = state.services.filter(function(s){
     return s.status!=='Archived' && serviceMatches(s,q) && !already.some(function(it){ return it.id===s.id; });

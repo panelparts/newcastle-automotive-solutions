@@ -267,6 +267,7 @@
   .pill-draft{background:var(--steel-soft);color:var(--steel);}
   .pill-sent{background:var(--st-completed-soft);color:var(--st-completed);}
   .pill-void{background:var(--danger-soft);color:var(--danger);}
+  .pill-paid{background:var(--st-invoiced-soft);color:var(--st-invoiced);}
   .pill-queued{background:var(--st-progress-soft);color:var(--st-progress);}
   .badge-type{
     display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;color:var(--ink-soft);
@@ -540,6 +541,7 @@ function fmtMoney(n){
 }
 function invoiceStatusPill(iv){
   if(iv.status==='void') return {cls:'void', label:'Void'};
+  if(iv.status==='paid') return {cls:'paid', label:'Paid'};
   if(iv.status==='sent') return {cls:'sent', label:'Sent'};
   return {cls:'draft', label:'Draft'};
 }
@@ -1837,13 +1839,16 @@ var NAV_ITEMS = [
   {id:'schedule', label:'Schedule', icon:ICONS.calendar},
   {id:'jobs', label:'Jobs', icon:ICONS.clipboard},
   {id:'customers', label:'Customers', icon:ICONS.contact},
-  {id:'time', label:'Time', icon:ICONS.clock},
   {id:'invoicing', label:'Invoicing', icon:ICONS.receipt},
   {id:'services', label:'Services', icon:ICONS.tag},
   {id:'products', label:'Products', icon:ICONS.box},
-  {id:'staff', label:'Staff', icon:ICONS.users},
   {id:'account', label:'Account', icon:ICONS.gear}
 ];
+// 'time' and 'staff' are no longer top-level nav items (2026-09-16, at the
+// user's request): Time was removed entirely, and Staff now lives inside
+// Account (see the "Team" card in accountView()) instead of its own tab.
+// Both views (timeView(), staffView()) still exist and still work — staff is
+// just reached via a button in Account now, not a persistent tab.
 var VIEW_TITLES = {schedule:'Schedule', jobs:'Jobs', customers:'Customers', time:'Time Tracking', invoicing:'Invoicing', services:'Services', products:'Products', staff:'Staff', account:'Account'};
 
 /* ===================== render: shell ===================== */
@@ -1952,6 +1957,7 @@ function isEditingTextField(){
   var el = document.activeElement;
   if(!el) return false;
   if(el.tagName==='TEXTAREA') return true;
+  if(el.tagName==='SELECT') return true;
   if(el.tagName==='INPUT'){
     var t = (el.getAttribute('type')||'text').toLowerCase();
     return ['text','email','password','tel','number','search','url'].indexOf(t)!==-1;
@@ -1965,7 +1971,7 @@ function backgroundRender(){
 document.addEventListener('focusout', function(e){
   if(!backgroundRenderPending) return;
   var t = e.target;
-  if(t && (t.tagName==='INPUT' || t.tagName==='TEXTAREA')){
+  if(t && (t.tagName==='INPUT' || t.tagName==='TEXTAREA' || t.tagName==='SELECT')){
     backgroundRenderPending = false;
     render();
   }
@@ -1991,10 +1997,17 @@ function topbarHTML(){
   '</header>';
 }
 
+function navItemActive(n){
+  // Staff no longer has its own tab (it's reached from inside Account), so
+  // highlight Account as the active nav item while viewing it there too.
+  if(state.view===n.id) return true;
+  if(n.id==='account' && state.view==='staff') return true;
+  return false;
+}
 function railHTML(){
   return '<nav class="rail">' +
     NAV_ITEMS.map(function(n){
-      return '<button class="rail-item'+(state.view===n.id?' active':'')+'" data-action="nav" data-view="'+n.id+'">'+n.icon+'<span>'+n.label+'</span></button>';
+      return '<button class="rail-item'+(navItemActive(n)?' active':'')+'" data-action="nav" data-view="'+n.id+'">'+n.icon+'<span>'+n.label+'</span></button>';
     }).join('') +
     '<div class="rail-foot">Prototype build — sample data. Xero connection not yet linked.</div>' +
   '</nav>';
@@ -2002,7 +2015,7 @@ function railHTML(){
 function tabbarHTML(){
   return '<nav class="tabbar">' +
     NAV_ITEMS.map(function(n){
-      return '<button class="tab-item'+(state.view===n.id?' active':'')+'" data-action="nav" data-view="'+n.id+'">'+n.icon+'<span>'+n.label+'</span></button>';
+      return '<button class="tab-item'+(navItemActive(n)?' active':'')+'" data-action="nav" data-view="'+n.id+'">'+n.icon+'<span>'+n.label+'</span></button>';
     }).join('') +
   '</nav>';
 }
@@ -2423,6 +2436,7 @@ function staffView(){
   }).join('');
 
   return '' +
+    '<button type="button" class="btn btn-quiet btn-sm" data-action="nav" data-view="account" style="margin-bottom:10px">'+ICONS.chevL+' Back to Account</button>' +
     '<div class="section-head"><div><div class="section-title">Team</div><div class="section-sub">Techs and office staff who can be assigned to jobs.</div></div>' +
       '<button class="btn btn-primary btn-sm" data-action="new-staff">'+ICONS.plus+' Add staff</button></div>' +
     '<div class="stack-sm">'+cards+'</div>';
@@ -2468,6 +2482,12 @@ function accountView(){
       '</form>' +
     '</div>';
 
+  var teamCard = '<div class="card card-pad" style="margin-top:14px">' +
+      '<div class="row-between"><div><div class="section-sub">Team</div>' +
+      '<div class="helptext" style="margin-top:2px">'+state.staff.length+' staff member'+(state.staff.length===1?'':'s')+' — techs and office staff who can be assigned to jobs, and their colours/rates.</div></div>' +
+      '<button type="button" class="btn btn-sm" data-action="nav" data-view="staff">Manage staff →</button></div>' +
+    '</div>';
+
   var usersCard = '';
   if(me.role==='admin'){
     var rows = (state.users||[]).map(function(u){
@@ -2511,7 +2531,7 @@ function accountView(){
       '</div>' +
       '<button type="submit" class="btn btn-primary btn-block" style="margin-top:14px">Save changes</button>' +
     '</form>' +
-    xeroCard + youCard + usersCard;
+    xeroCard + youCard + teamCard + usersCard;
 }
 
 /* ===================== MODAL ROUTER ===================== */
@@ -2644,9 +2664,9 @@ function bookingModalHTML(m){
       '<div class="section-sub">Job items (optional)</div>' +
       '<div class="helptext" style="margin-top:2px">Attach items from the service list — these carry through as pre-filled invoice lines.</div>' +
       '<div id="booking-service-chips" style="margin-top:8px">'+bookingServiceItemsHTML()+'</div>' +
-      '<div class="field" style="margin-top:8px"><input type="text" id="booking-service-input" list="booking-service-datalist" placeholder="Search item code or name to add…" autocomplete="off"></div>' +
-    '</div>' +
-    '<datalist id="booking-service-datalist">'+state.services.filter(function(s){return s.status!=='Archived';}).map(function(s){ return '<option value="'+escapeHtml(serviceLabel(s))+'">'; }).join('')+'</datalist>';
+      '<div class="field" style="margin-top:8px"><input type="text" id="booking-service-input" placeholder="Search item code or name to add…" autocomplete="off"></div>' +
+      '<div class="stack-sm" id="booking-service-results" style="margin-top:6px;max-height:180px;overflow:auto">'+bookingServiceResultsHTML('')+'</div>' +
+    '</div>';
 
   var extra = '';
   if(editing){
@@ -2684,6 +2704,44 @@ function bookingServiceItemsHTML(){
     return '<div class="vehicle-row"><span style="flex:1">'+escapeHtml(it.name)+durTag+'</span><span class="mono" style="font-weight:700">'+(it.price!=null?fmtMoney(it.price):'—')+'</span>' +
       '<button type="button" class="icon-btn" style="width:24px;height:24px" data-action="remove-booking-service" data-idx="'+i+'">'+ICONS.close+'</button></div>';
   }).join('');
+}
+// Tap-to-pick results list for the "Job items" search box on the booking form.
+// A native <input list="..."> datalist used to drive this, but iOS/Mobile Safari
+// doesn't show the suggestion dropdown for <datalist> at all — so on iPhone the
+// field looked like it had no items to select. This renders the matches as a
+// plain tappable list instead (same pattern as the invoice service/product
+// picker), which works the same on touch and desktop.
+function bookingServiceResultsHTML(q){
+  q = q || '';
+  if(!q.trim()) return '';
+  var already = (state.bookingDraft && state.bookingDraft.serviceItems) || [];
+  var list = state.services.filter(function(s){
+    return s.status!=='Archived' && serviceMatches(s,q) && !already.some(function(it){ return it.id===s.id; });
+  }).sort(function(a,b){ return a.name.localeCompare(b.name); });
+  if(!list.length) return '<div class="empty">No matching items.</div>';
+  return list.map(function(s){
+    return '<div class="job-row" data-action="pick-booking-service" data-id="'+s.id+'">' +
+      '<div class="job-body">' +
+        '<div class="job-top"><span class="job-cust">'+escapeHtml(s.name)+'</span><span class="mono" style="font-weight:700;white-space:nowrap">'+(s.salesUnitPrice!=null?fmtMoney(s.salesUnitPrice):'—')+'</span></div>' +
+        '<div class="job-meta"><span class="mono">'+escapeHtml(s.code)+'</span></div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+function addBookingServiceItem(match){
+  if(!match) return;
+  if(!state.bookingDraft) state.bookingDraft = {key:'new', serviceItems:[]};
+  var already = state.bookingDraft.serviceItems.some(function(it){ return it.id===match.id; });
+  if(!already){
+    state.bookingDraft.serviceItems.push({id:match.id, code:match.code, name:match.name, desc:match.salesDescription, price:match.salesUnitPrice, durationMins: match.durationMins||0});
+    if(match.durationMins) bumpBookingEndTime(match.durationMins);
+  }
+  var input = document.getElementById('booking-service-input');
+  if(input) input.value = '';
+  var results = document.getElementById('booking-service-results');
+  if(results) results.innerHTML = '';
+  var chips = document.getElementById('booking-service-chips');
+  if(chips) chips.innerHTML = bookingServiceItemsHTML();
 }
 function bumpBookingEndTime(deltaMins){
   if(!deltaMins) return;
@@ -2856,7 +2914,10 @@ function customerModalHTML(m){
     state.customerDraft = {key: draftKey, vehicles: c ? (c.vehicles||[]).slice() : []};
   }
 
-  var form = '<form id="customer-form" data-form="customer" data-id="'+(c?c.id:'')+'">' +
+  var xeroSyncNote = (c && c.xeroContactId)
+    ? '<div class="helptext" style="margin-bottom:8px">Synced with Xero — edits here update that contact automatically.</div>'
+    : '';
+  var form = xeroSyncNote + '<form id="customer-form" data-form="customer" data-id="'+(c?c.id:'')+'">' +
     '<div class="field"><label>Name</label><input type="text" name="name" value="'+(c?escapeHtml(c.name):'')+'" required></div>' +
     '<div class="field-row">' +
       '<div class="field"><label>Phone</label><input type="tel" name="phone" value="'+(c?escapeHtml(c.phone||''):'')+'"></div>' +
@@ -2917,12 +2978,15 @@ function invoiceModalHTML(m){
     var voidNote = iv.status==='void'
       ? '<div class="helptext" style="margin-top:8px;color:var(--danger)">This invoice is marked void. It no longer counts as sent — the job it came from can be invoiced again if needed. This does not change anything already in Xero.</div>'
       : '';
+    var paidNote = iv.status==='paid'
+      ? '<div class="helptext" style="margin-top:8px">Xero shows this invoice as paid — picked up automatically, nothing to do here.</div>'
+      : '';
     var body = '<div class="card card-pad">' +
       '<div class="row-between"><strong>'+escapeHtml(iv.customerName)+'</strong><span class="pill pill-'+invoiceStatusPill(iv).cls+'">'+invoiceStatusPill(iv).label+'</span></div>' +
       '<div class="helptext" style="margin-top:4px">Job reference: <span class="mono">'+escapeHtml(iv.reference||'—')+'</span>'+xeroLine+'</div>' +
       '<div style="margin-top:10px">'+lines+'</div>' +
       totalsHTML(iv.subtotal, iv.gst, iv.total) +
-    '</div>' + photosBlock + voidNote;
+    '</div>' + photosBlock + voidNote + paidNote;
     var voidBtn = iv.status!=='void'
       ? '<button type="button" class="btn btn-quiet" data-action="ask-void-invoice" data-id="'+iv.id+'">Mark as void</button>'
       : '';
@@ -3263,6 +3327,10 @@ function handleAction(el){
   if(a==='confirm-delete-product'){ var delProdId=el.dataset.id; closeModal(); removeDoc('products', delProdId); toast('Product deleted'); return; }
   if(a==='edit-customer'){ openModal({type:'customer', id:el.dataset.id}); return; }
   if(a==='new-customer'){ openModal({type:'customer', id:null}); return; }
+  if(a==='pick-booking-service'){
+    addBookingServiceItem(getService(el.dataset.id));
+    return;
+  }
   if(a==='remove-booking-service'){
     var bsIdx = Number(el.dataset.idx);
     if(state.bookingDraft){
@@ -3752,18 +3820,8 @@ function wirePostRender(){
   var bookingSvcInput = document.getElementById('booking-service-input');
   if(bookingSvcInput){
     bookingSvcInput.addEventListener('input', function(){
-      var match = findServiceByLabel(bookingSvcInput.value);
-      if(match){
-        if(!state.bookingDraft) state.bookingDraft = {key:'new', serviceItems:[]};
-        var already = state.bookingDraft.serviceItems.some(function(it){ return it.id===match.id; });
-        if(!already){
-          state.bookingDraft.serviceItems.push({id:match.id, code:match.code, name:match.name, desc:match.salesDescription, price:match.salesUnitPrice, durationMins: match.durationMins||0});
-          if(match.durationMins) bumpBookingEndTime(match.durationMins);
-        }
-        bookingSvcInput.value = '';
-        var bsChips2 = document.getElementById('booking-service-chips');
-        if(bsChips2) bsChips2.innerHTML = bookingServiceItemsHTML();
-      }
+      var results = document.getElementById('booking-service-results');
+      if(results) results.innerHTML = bookingServiceResultsHTML(bookingSvcInput.value);
     });
   }
   var custNameInput = document.getElementById('cust-name-input');

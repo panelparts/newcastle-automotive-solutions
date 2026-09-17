@@ -1,0 +1,16 @@
+-- One-off migration for an existing, already-deployed database (2026-09-17):
+-- adds the "billable" column the new time-tracking feature needs (the "Bill
+-- this time to the invoice" checkbox on the Stop timer dialog). A brand new
+-- database created from schema.sql already has this column — this file is
+-- only for a database that existed before this change.
+--
+-- Every existing time entry defaults to billable = 1 (billed), so nothing
+-- already logged changes behaviour — this only affects new entries where the
+-- checkbox is unticked.
+--
+-- Run this in the D1 console's Console tab (one bare statement, no leading
+-- comment lines — see DEPLOY.md Part 3 for the same limitation). Safe to run
+-- more than once: it will fail harmlessly with "duplicate column name" if the
+-- column already exists, rather than doing anything destructive.
+
+ALTER TABLE time_entries ADD COLUMN billable INTEGER NOT NULL DEFAULT 1;

@@ -559,7 +559,137 @@ async function sendInvoiceToXero(id, env) {
   }
 
   const updatedRow = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
-  return json({ ok: true, invoice: def.toDoc(updatedRow), photoErrors: photoErrors.length ? photoErrors : undefined });
+  const finalDoc = def.toDoc(updatedRow);
+
+  // 2026-09-18, at the user's request: also email the invoice's photos
+  // straight to the customer, the moment the invoice is sent — see
+  // emailPhotosToCustomer() below for exactly what it does and doesn't do.
+  // This must never block or fail the invoice send itself (the invoice is
+  // already sent to Xero above by this point) — any problem here comes back
+  // as `photoEmail` on the response for the frontend to show as a toast,
+  // the same non-fatal pattern as `photoErrors` above.
+  const photoEmail = await emailPhotosToCustomer(env, finalDoc).catch((err) => ({
+    sent: false,
+    reason: 'exception',
+    detail: String((err && err.message) || err),
+  }));
+
+  return json({ ok: true, invoice: finalDoc, photoErrors: photoErrors.length ? photoErrors : undefined, photoEmail });
+}
+
+/* ============================ Email photos to customer ============================ */
+/* Built 2026-09-18, at the user's request ("automatically send the attached
+ * images to the clients email on file"), triggered from sendInvoiceToXero()
+ * above at the moment an invoice is sent — not when photos are first
+ * attached to a booking, and not as a separate manual button.
+ *
+ * Uses Resend (https://resend.com) — a plain HTTPS API call, no SDK needed,
+ * which suits a Cloudflare Worker well. Two things this depends on, neither
+ * of which this code can do for you:
+ *   secret   RESEND_API_KEY     (Settings -> Variables and Secrets)
+ *   var      EMAIL_FROM_ADDRESS (wrangler.jsonc "vars" — must be on a domain
+ *                                verified with Resend; Resend will silently
+ *                                refuse to deliver to a real customer address
+ *                                from an unverified domain, only to the
+ *                                account owner's own address, which is why
+ *                                this can't just default to resend.dev)
+ *   var      EMAIL_FROM_NAME    (wrangler.jsonc "vars" — display name only)
+ * See DEPLOY.md "Part 6" for the one-time Resend/DNS setup this needs.
+ *
+ * Deliberately quiet about most non-problems: no photos on the invoice, no
+ * booking linked, no customer linked, or no email on file for that customer
+ * are all just "nothing to do here" (sent: false, reason: <why>), not
+ * errors — plenty of bookings/customers legitimately have no email on file.
+ * A real send failure (Resend rejects it, secret missing, etc.) is reported
+ * back so the frontend can toast it, but never throws past this function.
+ */
+async function emailPhotosToCustomer(env, invoiceDoc) {
+  if (!invoiceDoc.photos || !invoiceDoc.photos.length) {
+    return { sent: false, reason: 'no_photos' };
+  }
+  if (!invoiceDoc.bookingId) {
+    return { sent: false, reason: 'no_booking_linked' };
+  }
+  const booking = await env.DB.prepare('SELECT customer_id FROM bookings WHERE id = ?')
+    .bind(invoiceDoc.bookingId).first();
+  if (!booking || !booking.customer_id) {
+    return { sent: false, reason: 'no_customer_linked' };
+  }
+  const customer = await env.DB.prepare('SELECT email FROM customers WHERE id = ?')
+    .bind(booking.customer_id).first();
+  if (!customer || !customer.email) {
+    return { sent: false, reason: 'no_email_on_file' };
+  }
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM_ADDRESS) {
+    return { sent: false, reason: 'email_not_configured' };
+  }
+
+  const attachments = [];
+  for (let i = 0; i < invoiceDoc.photos.length; i++) {
+    const p = invoiceDoc.photos[i];
+    const photoId = p.photoId || p.assetId;
+    if (!photoId) continue; // same "never finished uploading" case as the Xero attach loop above
+    const row = await env.DB.prepare('SELECT * FROM photos WHERE id = ?').bind(photoId).first();
+    if (!row) continue;
+    const obj = await env.PHOTOS.get(row.r2_key);
+    if (!obj) continue;
+    const buf = await obj.arrayBuffer();
+    attachments.push({
+      filename: 'photo-' + (i + 1) + '.jpg',
+      content: arrayBufferToBase64(buf),
+      content_type: row.content_type || 'image/jpeg',
+    });
+  }
+  if (!attachments.length) {
+    return { sent: false, reason: 'no_photo_bytes_available' };
+  }
+
+  const fromName = env.EMAIL_FROM_NAME || 'Newcastle Automotive Solutions';
+  const jobRef = invoiceDoc.reference || invoiceDoc.xeroInvoiceNumber || invoiceDoc.id;
+  const html =
+    '<p>Hi ' + escapeHtml(invoiceDoc.customerName || '') + ',</p>' +
+    '<p>Here ' + (attachments.length === 1 ? 'is a photo' : 'are ' + attachments.length + ' photos') +
+    ' from your recent job' + (jobRef ? ' (ref: ' + escapeHtml(String(jobRef)) + ')' : '') + '.</p>' +
+    '<p>' + escapeHtml(fromName) + '</p>';
+
+  let res, body;
+  try {
+    res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + env.RESEND_API_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: fromName + ' <' + env.EMAIL_FROM_ADDRESS + '>',
+        to: [customer.email],
+        subject: 'Photos from your job' + (jobRef ? ' — ' + jobRef : ''),
+        html,
+        attachments,
+      }),
+    });
+    body = await res.json().catch(() => ({}));
+  } catch (err) {
+    return { sent: false, reason: 'network_error', detail: String((err && err.message) || err) };
+  }
+  if (!res.ok) {
+    return { sent: false, reason: 'resend_rejected', detail: (body && body.message) || ('http_' + res.status) };
+  }
+  return { sent: true, to: customer.email, count: attachments.length };
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000; // avoid blowing the call stack on String.fromCharCode.apply for large photos
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 /* ============================ Customers <-> Xero ============================ */

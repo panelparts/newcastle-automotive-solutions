@@ -17,7 +17,9 @@
     { "binding": "PHOTOS", "bucket_name": "newcastle-automotive-solutions-photos" }
   ],
   "vars": {
-    "XERO_WORKER_URL": "https://nas-xero-connector.nas-newcastle.workers.dev"
+    "XERO_WORKER_URL": "https://nas-xero-connector.nas-newcastle.workers.dev",
+    "EMAIL_FROM_ADDRESS": "jobs@newcastleauto.com.au",
+    "EMAIL_FROM_NAME": "Newcastle Automotive Solutions"
   },
   "services": [
     { "binding": "XERO_WORKER", "service": "nas-xero-connector" }

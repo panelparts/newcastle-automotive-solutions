@@ -3654,17 +3654,42 @@ async function finalizeInvoice(bookingId, send){
       // the "photos not getting to Xero" note in the rebuild log). Now the
       // backend reports exactly which photos didn't make it and why
       // (data.photoErrors), surfaced here instead of a plain success toast.
+      var msg = 'Sent to Xero as draft invoice '+(data.invoice.xeroInvoiceNumber||'');
       if(data.photoErrors && data.photoErrors.length){
-        toast('Sent to Xero as draft invoice '+(data.invoice.xeroInvoiceNumber||'')+' — but '+data.photoErrors.length+' photo(s) did not attach. Check the invoice in Xero, and see Account → Xero connection.');
-      } else {
-        toast('Sent to Xero as draft invoice '+(data.invoice.xeroInvoiceNumber||''));
+        msg += ' — but '+data.photoErrors.length+' photo(s) did not attach. Check the invoice in Xero, and see Account → Xero connection.';
       }
+      // 2026-09-18: also emails the invoice's photos to the customer's
+      // email on file, at the user's request — see photoEmailNote() below
+      // for which outcomes are worth mentioning here vs. staying quiet
+      // (most bookings/customers legitimately have no email on file, which
+      // isn't an error).
+      var emailNote = photoEmailNote(data.photoEmail);
+      if(emailNote) msg += ' ' + emailNote;
+      toast(msg);
     } else {
       toast('Could not send to Xero — '+xeroErrorMessage(data && data.detail)+'. Saved as a local draft.');
     }
   }catch(e){
     toast('Could not reach the Xero connector. Saved as a local draft.');
   }
+}
+
+// 2026-09-18: turns the backend's photoEmail result into a short toast
+// suffix, or nothing at all. A real send failure is worth a heads-up
+// (something's actually wrong — Resend rejected it, or it's not configured
+// yet); "there was nothing to email" (no photos, no customer link, no email
+// on file) is the normal case for plenty of jobs and shouldn't nag on every
+// single invoice sent.
+function photoEmailNote(photoEmail){
+  if(!photoEmail) return '';
+  if(photoEmail.sent) return 'Photos emailed to the customer.';
+  if(photoEmail.reason === 'resend_rejected' || photoEmail.reason === 'network_error' || photoEmail.reason === 'exception'){
+    return 'Could not email the photos to the customer — check Account for email setup.';
+  }
+  if(photoEmail.reason === 'email_not_configured'){
+    return 'Photos were not emailed — email sending isn\'t set up yet (see Account).';
+  }
+  return ''; // no_photos / no_booking_linked / no_customer_linked / no_email_on_file / no_photo_bytes_available — nothing to flag
 }
 
 /* ===================== forms ===================== */

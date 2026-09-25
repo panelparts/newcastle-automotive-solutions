@@ -3186,8 +3186,26 @@ function invoicePhotosHTML(photos, editable, scope, invId){
   }).join('');
   var addBtn = '';
   if(editable && photos.length < INVOICE_PHOTO_MAX){
-    addBtn = '<label class="photo-add-btn">'+ICONS.plus+'<span>Add photo</span>' +
-      '<input type="file" accept="image/*" multiple data-change="invoice-photo-input" class="photo-file-input"></label>';
+    // Bug 14, second follow-up, 2026-09-25: the user pinned this down further —
+    // every OTHER button in a freshly-opened modal works first-click, only this
+    // one doesn't, every single time, resetting each time the modal reopens.
+    // That rules out the earlier "background render lands mid-tap" theory (which
+    // would hit any button, not just this one) and points at what's actually
+    // different about this control: every other button in the app goes through
+    // our own document-level [data-action] click delegate (handleAction), which
+    // the user confirms is reliably first-click. This was the one exception,
+    // relying instead on the browser's native <label>-forwards-click-to-its-
+    // wrapped-<input> behavior — which, for a label inserted fresh via
+    // innerHTML (as every modal open does), was apparently not reliably wired
+    // up in time for the very next click in this Chrome build. Fixed by routing
+    // this through the same proven data-action delegate as everything else: the
+    // visible tile is now a plain div, and its handler (handleAction's
+    // 'trigger-photo-input' case) calls .click() on the real (still hidden,
+    // still a real rendered input so iOS keeps forwarding to it fine) file
+    // input directly via getElementById, instead of depending on native label
+    // semantics at all.
+    addBtn = '<div class="photo-add-btn" data-action="trigger-photo-input" data-target="invoice-photo-file-input">'+ICONS.plus+'<span>Add photo</span></div>' +
+      '<input type="file" id="invoice-photo-file-input" accept="image/*" multiple data-change="invoice-photo-input" class="photo-file-input">';
   }
   var empty = (!photos.length && !editable) ? '<div class="helptext">No photos attached.</div>' : '';
   return thumbs + addBtn + empty;
@@ -3282,8 +3300,9 @@ function bookingPhotosHTML(photos){
   }).join('');
   var addBtn = '';
   if(photos.length < INVOICE_PHOTO_MAX){
-    addBtn = '<label class="photo-add-btn">'+ICONS.plus+'<span>Add photo</span>' +
-      '<input type="file" accept="image/*" multiple data-change="booking-photo-input" class="photo-file-input"></label>';
+    // Same fix as the invoice photos' "Add photo" tile above — see that comment.
+    addBtn = '<div class="photo-add-btn" data-action="trigger-photo-input" data-target="booking-photo-file-input">'+ICONS.plus+'<span>Add photo</span></div>' +
+      '<input type="file" id="booking-photo-file-input" accept="image/*" multiple data-change="booking-photo-input" class="photo-file-input">';
   }
   return thumbs + addBtn;
 }
@@ -3439,6 +3458,14 @@ function stopTimerModalHTML(){
 /* ===================== actions ===================== */
 function handleAction(el){
   var a = el.dataset.action;
+  if(a==='trigger-photo-input'){
+    // See the "Bug 14, second follow-up" comment where this tile is built —
+    // routes the Add Photo tap through our normal, reliably-first-click
+    // [data-action] delegate instead of native <label> click forwarding.
+    var photoInput = document.getElementById(el.dataset.target);
+    if(photoInput) photoInput.click();
+    return;
+  }
   if(a==='nav'){ state.view = el.dataset.view; state.confirmDelete=null; render(); return; }
   if(a==='new-booking'){ openModal({type:'booking', id:null, prefill:{date:state.selectedDate}}); return; }
   if(a==='open-booking'){ openModal({type:'booking', id:el.dataset.id}); return; }

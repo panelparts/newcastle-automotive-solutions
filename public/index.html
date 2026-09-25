@@ -472,6 +472,28 @@
     background:var(--surface);width:100%;max-width:520px;max-height:92vh;
     border-radius:20px 20px 0 0;overflow-y:auto;box-shadow:var(--shadow-2);
     display:flex;flex-direction:column;
+    /* 2026-09-25: reproduced the booking modal directly (logged in as a real
+       user, simulated the actual click pipeline end to end) to chase the
+       still-open "first click after opening a booking" issue. The Add Photo
+       click-delegation code itself fires correctly on the very first
+       synthetic click — that rules out a JS logic bug in trigger-photo-input.
+       But the booking form is tall (well over 1000px even empty — the "Add
+       photo" section alone sits well past a full screen height down), so it
+       reliably needs to scroll, meaning a real vertical scrollbar appears the
+       instant the modal's content paints. On Windows Chrome (classic,
+       space-taking scrollbars, unlike macOS's overlay ones) that scrollbar's
+       arrival shrinks the panel's available width by ~15-17px right as the
+       user's first real click is landing — a scriptable/synthetic click can't
+       reproduce this because it dispatches mousedown/mouseup instantly in one
+       tick, with no real time for that layout shift to happen in between, the
+       way an actual physical click does. scrollbar-gutter:stable reserves
+       that space from the very first paint, so there's nothing to shift.
+       Not independently confirmed against the user's own browser yet (the
+       remote inspection session used to test this couldn't get a real
+       on-screen render to double-check with a live timed click) — but it's a
+       real, well-documented class of bug, costs nothing if it isn't the
+       actual cause, and is worth having in either case. */
+    scrollbar-gutter:stable;
   }
   @media (min-width:640px){ .modal-panel{border-radius:var(--radius-l);max-height:88vh;} }
   .modal-head{

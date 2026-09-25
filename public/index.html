@@ -2039,18 +2039,28 @@ window.addEventListener('focus', function(){
 // coalescing timeout so the up-to-8 near-simultaneous poll callbacks in one
 // burst produce at most one real rebuild instead of up to 8, shrinking how
 // often a rebuild is happening at all.
+//
+// Follow-up, same day: the first version of this fix also force-flushed any
+// deferred render 50ms after every single mouseup/touchend, to "catch up"
+// right away. That backfired specifically right after opening a modal (e.g.
+// "New booking") — the flush landed almost exactly when the very next tap
+// inside the fresh modal happened, recreating the identical mid-tap-rebuild
+// problem, just shifted to right after opening something instead of on a
+// plain 4-second cycle. There's no need to force that catch-up immediately:
+// every collection already polls again on its own within 4 seconds, and
+// backgroundRender() re-checks pointerActive fresh every time it's called —
+// so simply clearing pointerActive here (no render()) lets the next natural
+// poll pick up the latest data once the coast is actually clear, without
+// ever racing the user's next tap.
 var pointerActive = false;
-function flushBackgroundRenderIfIdle(){
-  setTimeout(function(){
-    pointerActive = false;
-    if(backgroundRenderPending){ backgroundRenderPending = false; render(); }
-  }, 50);
+function clearPointerActive(){
+  setTimeout(function(){ pointerActive = false; }, 50);
 }
 document.addEventListener('mousedown', function(){ pointerActive = true; });
 document.addEventListener('touchstart', function(){ pointerActive = true; }, {passive:true});
-document.addEventListener('mouseup', flushBackgroundRenderIfIdle);
-document.addEventListener('touchend', flushBackgroundRenderIfIdle, {passive:true});
-document.addEventListener('touchcancel', flushBackgroundRenderIfIdle, {passive:true});
+document.addEventListener('mouseup', clearPointerActive);
+document.addEventListener('touchend', clearPointerActive, {passive:true});
+document.addEventListener('touchcancel', clearPointerActive, {passive:true});
 var backgroundRenderTimer = null;
 function backgroundRender(){
   if(isEditingTextField() || filePickerOpen || pointerActive){ backgroundRenderPending = true; return; }

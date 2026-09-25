@@ -2009,9 +2009,47 @@ window.addEventListener('focus', function(){
     if(backgroundRenderPending){ backgroundRenderPending = false; render(); }
   }, 500);
 });
+// Bug 14, 2026-09-26 ("menu and buttons need clicking twice to open"): every
+// collection (staff/settings/bookings/timeEntries/invoices/customers/
+// services/products — 8 in total) polls independently every 4 seconds (see
+// subscribeRest() above), each with its own setInterval, so a single "tick"
+// can land as a burst of up to 8 separate backgroundRender() calls a few
+// milliseconds apart as each fetch resolves. Each one was a full #app
+// innerHTML rebuild (same as every render() before this fix). A tap/click
+// takes a human ~100-300ms from finger-down to finger-up — if one of those
+// rebuilds happened to land in the middle of that window, the button the
+// user was actually pressing got replaced by an identical-looking new node
+// mid-tap, and the browser had nothing to fire the click on: the tap was
+// silently lost. The next tap, landing in a quiet moment between polls,
+// worked fine — which is exactly "have to click it twice". Two fixes,
+// together: (1) pointerActive defers any background render for as long as a
+// pointer/touch is actually down (mousedown/touchstart through shortly after
+// mouseup/touchend), the same pattern already used above for text fields and
+// the file-picker sheet, so a rebuild can never land mid-tap; (2) a short
+// coalescing timeout so the up-to-8 near-simultaneous poll callbacks in one
+// burst produce at most one real rebuild instead of up to 8, shrinking how
+// often a rebuild is happening at all.
+var pointerActive = false;
+function flushBackgroundRenderIfIdle(){
+  setTimeout(function(){
+    pointerActive = false;
+    if(backgroundRenderPending){ backgroundRenderPending = false; render(); }
+  }, 50);
+}
+document.addEventListener('mousedown', function(){ pointerActive = true; });
+document.addEventListener('touchstart', function(){ pointerActive = true; }, {passive:true});
+document.addEventListener('mouseup', flushBackgroundRenderIfIdle);
+document.addEventListener('touchend', flushBackgroundRenderIfIdle, {passive:true});
+document.addEventListener('touchcancel', flushBackgroundRenderIfIdle, {passive:true});
+var backgroundRenderTimer = null;
 function backgroundRender(){
-  if(isEditingTextField() || filePickerOpen){ backgroundRenderPending = true; return; }
-  render();
+  if(isEditingTextField() || filePickerOpen || pointerActive){ backgroundRenderPending = true; return; }
+  if(backgroundRenderTimer) return; // a coalesced render is already queued for this burst
+  backgroundRenderTimer = setTimeout(function(){
+    backgroundRenderTimer = null;
+    if(isEditingTextField() || filePickerOpen || pointerActive){ backgroundRenderPending = true; return; }
+    render();
+  }, 50);
 }
 document.addEventListener('focusout', function(e){
   if(!backgroundRenderPending) return;

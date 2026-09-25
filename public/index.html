@@ -435,6 +435,16 @@
   .photo-thumb-remove svg{width:12px;height:12px;}
   .photo-add-btn{width:72px;height:72px;border-radius:10px;border:1.5px dashed var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--ink-faint);cursor:pointer;flex:none;text-align:center;font-size:10.5px;font-weight:600;}
   .photo-add-btn svg{width:18px;height:18px;}
+  /* Bug 14 follow-up, 2026-09-26: a <label> is supposed to forward a click
+     straight through to the form control it wraps, opening the file/camera
+     sheet on a single tap — but that hidden <input type="file"> was
+     `display:none`, which some WebKit/iOS versions don't reliably forward a
+     click to (a display:none element isn't part of the render tree at all,
+     so its "activation behavior" via the label can silently not fire). The
+     first tap did nothing as a result; a second tap sometimes worked by
+     coincidence. Kept off-screen instead, the standard "visually hidden but
+     still rendered" technique, which iOS reliably forwards a label click to. */
+  .photo-file-input{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
   .photo-lightbox-backdrop{position:fixed;inset:0;background:rgba(10,12,16,.82);z-index:80;display:flex;align-items:center;justify-content:center;padding:24px;}
   .photo-lightbox-panel{position:relative;max-width:min(92vw,720px);max-height:88vh;}
   .photo-lightbox-panel img{max-width:100%;max-height:88vh;border-radius:10px;display:block;}
@@ -3167,7 +3177,7 @@ function invoicePhotosHTML(photos, editable, scope, invId){
   var addBtn = '';
   if(editable && photos.length < INVOICE_PHOTO_MAX){
     addBtn = '<label class="photo-add-btn">'+ICONS.plus+'<span>Add photo</span>' +
-      '<input type="file" accept="image/*" multiple data-change="invoice-photo-input" style="display:none"></label>';
+      '<input type="file" accept="image/*" multiple data-change="invoice-photo-input" class="photo-file-input"></label>';
   }
   var empty = (!photos.length && !editable) ? '<div class="helptext">No photos attached.</div>' : '';
   return thumbs + addBtn + empty;
@@ -3263,7 +3273,7 @@ function bookingPhotosHTML(photos){
   var addBtn = '';
   if(photos.length < INVOICE_PHOTO_MAX){
     addBtn = '<label class="photo-add-btn">'+ICONS.plus+'<span>Add photo</span>' +
-      '<input type="file" accept="image/*" multiple data-change="booking-photo-input" style="display:none"></label>';
+      '<input type="file" accept="image/*" multiple data-change="booking-photo-input" class="photo-file-input"></label>';
   }
   return thumbs + addBtn;
 }

@@ -2097,8 +2097,31 @@ document.addEventListener('focusout', function(e){
   if(!backgroundRenderPending) return;
   var t = e.target;
   if(t && (t.tagName==='INPUT' || t.tagName==='TEXTAREA' || t.tagName==='SELECT')){
-    backgroundRenderPending = false;
-    render();
+    // Bug 14, real root cause found 2026-09-25 (the user's precise repro —
+    // "if I add the details like customer and job description then press
+    // Add Photo I can see it move a tiny bit and it won't open" — going
+    // straight to Add Photo on an empty form always worked): focusout fires
+    // as part of the SAME mousedown that's about to blur this field —
+    // BEFORE the resulting click event fires on whatever was actually
+    // clicked (e.g. the Add Photo tile below it). Calling render() here
+    // synchronously rebuilds the whole modal's DOM right in the middle of
+    // that click — sometimes shifting or replacing the very element the
+    // mousedown just landed on, which is exactly "first click after typing
+    // in a field doesn't register, the next one does" (by the second click
+    // the deferred render has already happened and the layout's settled).
+    // This was only reachable once something had actually been deferred
+    // (typing sets isEditingTextField() true, so a background poll landing
+    // meanwhile sets backgroundRenderPending instead of rendering right
+    // away) — which is exactly why an untouched, empty form never showed
+    // it. Fixed by deferring this render with setTimeout(0): that runs in a
+    // fresh task, strictly after the current mousedown/mouseup/click
+    // sequence has already been dispatched, so the click completes on the
+    // DOM as it existed when the user pressed, and the deferred render
+    // (which the user won't visually clash with, since they've already
+    // moved on) happens right after instead of in the middle.
+    setTimeout(function(){
+      if(backgroundRenderPending){ backgroundRenderPending = false; render(); }
+    }, 0);
   }
 });
 

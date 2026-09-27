@@ -388,6 +388,8 @@
     text-transform:uppercase;letter-spacing:.03em;cursor:pointer;white-space:nowrap;flex:none;
   }
   .te-bill-toggle.off{background:var(--surface-2);color:var(--ink-faint);border-color:var(--border);}
+  .te-bill-summary{padding-bottom:8px;margin-bottom:4px;border-bottom:1px solid var(--border-soft);font-weight:600;}
+  .te-bill-summary .te-desc{color:var(--ink);}
 
   .week-bar-row{display:flex;align-items:center;gap:10px;padding:7px 0;}
   .wbr-label{width:76px;flex:none;font-size:12.5px;font-weight:600;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -1592,6 +1594,27 @@ function minutesForItem(bookingId, itemId){
 // so nothing already-billed silently drops off an invoice.
 function unlinkedMinutesFor(bookingId){
   return timeEntriesFor(bookingId).filter(function(t){ return !t.itemId && t.billable!==false; }).reduce(function(a,t){ return a+t.minutes; },0);
+}
+// 2026-09-27, at the user's request ("change the Billed and not billed
+// switch to add all the time together for one switch instead of x amount,
+// this option also needs to be on the invoice screen"): replaces the
+// previous per-time-entry "Billed"/"Not billed" toggle with a single
+// combined switch per job — see unlinkedBillToggleHTML() below, used from
+// both the booking's own Time logged card and the Build-invoice screen.
+function unlinkedEntriesFor(bookingId){
+  return timeEntriesFor(bookingId).filter(function(t){ return !t.itemId; });
+}
+function unlinkedTotalMinutesFor(bookingId){
+  return unlinkedEntriesFor(bookingId).reduce(function(a,t){ return a+t.minutes; },0);
+}
+// Whether the combined unlinked time for this job currently counts as
+// billable. Any past mixed state (e.g. from the brief per-entry-toggle
+// version of this feature) reads as "not all billed" here — flipping the
+// switch once resets every unlinked entry to the same value, so it never
+// stays ambiguous for long.
+function unlinkedAllBillable(bookingId){
+  var entries = unlinkedEntriesFor(bookingId);
+  return entries.length ? entries.every(function(t){ return t.billable!==false; }) : true;
 }
 function bookingItemLabel(b, itemId){
   if(!itemId || !b || !b.serviceItems) return null;
@@ -3118,32 +3141,37 @@ function statusStepperHTML(b){
     '<div class="status-stepper" style="margin-top:9px">'+buttons+'</div></div>';
 }
 
+// 2026-09-27, at the user's request ("change the Billed and not billed
+// switch to add all the time together for one switch instead of x amount,
+// this option also needs to be on the invoice screen"): one shared row —
+// combined unlinked time for the job, plus a single toggle covering all of
+// it — instead of the brief previous version's one toggle per time entry.
+// Used both on the booking's own Time logged card (timeTrackingBlockHTML,
+// below) and the Build-invoice screen (invoiceModalHTML), right next to the
+// auto Labour line it actually controls. Returns '' when there's no
+// unlinked time at all — nothing to bill either way, so no point showing a
+// switch for it.
+function unlinkedBillToggleHTML(bookingId){
+  var totalMins = unlinkedTotalMinutesFor(bookingId);
+  if(!totalMins) return '';
+  var allBillable = unlinkedAllBillable(bookingId);
+  return '<div class="te-row te-bill-summary">' +
+    '<span class="te-desc">Unlinked time — '+fmtHrsMin(totalMins)+'</span>' +
+    '<button type="button" class="te-bill-toggle'+(allBillable?'':' off')+'" data-action="toggle-all-billable" data-id="'+bookingId+'">'+(allBillable?'Billed':'Not billed')+'</button>' +
+  '</div>';
+}
+
 function timeTrackingBlockHTML(b){
   var entries = timeEntriesFor(b.id);
   var total = minutesFor(b.id);
   var unlinked = unlinkedMinutesFor(b.id);
   var rows = entries.length ? entries.map(function(t){
     var itemName = bookingItemLabel(b, t.itemId);
-    // 2026-09-27, at the user's request, after finding the auto-complete/
-    // auto-pause timer logging (added same day, see the set-status handler)
-    // had quietly removed their ability to choose whether a piece of time
-    // counts toward the invoice — "we had the timer on a check box... this
-    // has gone, it adds the time to every invoice automatically." Rather
-    // than bringing back a dialog on every complete/pause (undoing the
-    // "no extra dialog" fix from earlier the same day), the choice now lives
-    // here instead: a tap-to-flip "Billed"/"Not billed" toggle on each time
-    // entry, so it can still be changed any time before the job is invoiced,
-    // whichever way it was logged. Item-linked time never hits the auto
-    // Labour line either way (that's the whole point of linking it to a
-    // priced job item) — the billable flag only ever means anything for
-    // unlinked time, so only unlinked entries get a toggle at all.
-    var billToggle = !t.itemId
-      ? '<button type="button" class="te-bill-toggle'+(t.billable===false?' off':'')+'" data-action="toggle-billable" data-id="'+t.id+'">'+(t.billable===false?'Not billed':'Billed')+'</button>'
-      : '';
     return '<div class="te-row"><span class="te-desc">'+escapeHtml(staffName(t.staffId))+(itemName?' · '+escapeHtml(itemName):'')+(t.note?' · '+escapeHtml(t.note):'')+'</span>' +
-      '<span style="display:flex;align-items:center;gap:8px">'+billToggle+'<span class="te-dur">'+fmtHrsMin(t.minutes)+'</span>' +
+      '<span style="display:flex;align-items:center;gap:8px"><span class="te-dur">'+fmtHrsMin(t.minutes)+'</span>' +
       '<button type="button" class="icon-btn" style="width:24px;height:24px" data-action="delete-time" data-id="'+t.id+'">'+ICONS.close+'</button></span></div>';
   }).join('') : '<div class="helptext">No time logged yet.</div>';
+  rows = unlinkedBillToggleHTML(b.id) + rows;
 
   var runningBanner = '';
   if(state.timer && state.timer.bookingId===b.id){
@@ -3369,7 +3397,17 @@ function invoiceModalHTML(m){
     var voidBtn = iv.status!=='void'
       ? '<button type="button" class="btn btn-quiet" data-action="ask-void-invoice" data-id="'+iv.id+'">Mark as void</button>'
       : '';
-    return modalShell('Invoice', body, voidBtn + '<button type="button" class="btn btn-block" data-action="close-modal">Close</button>');
+    // 2026-09-27, at the user's request ("If i save a booking as a draft
+    // there is no button to send the invoice it just has completed and no
+    // way to finish the invoice"): a 'draft' invoice (from "Save as draft"
+    // in the build screen) used to be a dead end once saved — reachable here
+    // from Invoice history, but this view never had a send button at all,
+    // for any status. Now a draft specifically gets one, using the same
+    // sendInvoiceIdToXero() the initial build-and-send button uses.
+    var sendBtn = iv.status==='draft'
+      ? '<button type="button" class="btn btn-primary btn-block" data-action="send-existing-invoice" data-id="'+iv.id+'" data-booking="'+iv.bookingId+'">Send to Xero</button>'
+      : '';
+    return modalShell('Invoice', body, voidBtn + sendBtn + '<button type="button" class="btn'+(sendBtn?'':' btn-block')+'" data-action="close-modal">Close</button>');
   }
 
   var b = getBooking(m.bookingId);
@@ -3387,6 +3425,13 @@ function invoiceModalHTML(m){
   var unlinkedMins = unlinkedMinutesFor(b.id);
   var laborAmt = (unlinkedMins/60) * b.rate;
   var laborLine = '<div class="line-item-row"><div class="li-desc">Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)</div><div class="li-amt">'+fmtMoney(laborAmt)+'</div></div>';
+  // 2026-09-27, at the user's request ("this option also needs to be on the
+  // invoice screen"): same combined Billed/Not billed switch as the
+  // booking's own Time logged card (unlinkedBillToggleHTML()), shown right
+  // above the Labour line it actually controls — flipping it here updates
+  // this draft's Labour amount/subtotal/total live, same as toggling it from
+  // the booking screen would.
+  var billToggleRow = unlinkedBillToggleHTML(b.id);
 
   var extraLines = state.invoiceDraft.extraLines.map(function(l,i){
     var amt = l.qty*l.unitPrice;
@@ -3404,7 +3449,7 @@ function invoiceModalHTML(m){
   var body = '<div class="card card-pad">' +
       '<div class="row-between"><strong>'+escapeHtml(b.customer.name)+'</strong>'+(b.vehicle.rego?'<span class="mono helptext">'+escapeHtml(b.vehicle.rego)+'</span>':'')+'</div>' +
       '<div class="helptext" style="margin-top:2px">Job reference: <span class="mono">'+escapeHtml(b.reference||'—')+'</span></div>' +
-      '<div style="margin-top:10px">'+laborLine+extraLines+'</div>' +
+      '<div style="margin-top:10px">'+billToggleRow+laborLine+extraLines+'</div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">' +
         '<button type="button" class="btn btn-sm" data-action="open-service-picker">'+ICONS.plus+' Add from service list</button>' +
         '<button type="button" class="btn btn-sm" data-action="open-product-picker">'+ICONS.plus+' Add from products list</button>' +
@@ -3825,12 +3870,19 @@ function handleAction(el){
     removeDoc('timeEntries', teId);
     return;
   }
-  if(a==='toggle-billable'){
-    var teToToggle = state.timeEntries.find(function(t){ return t.id===el.dataset.id; });
-    if(teToToggle){
-      var toggled = Object.assign({}, teToToggle, {billable: teToToggle.billable===false});
-      saveDoc('timeEntries', toggled);
-    }
+  if(a==='toggle-all-billable'){
+    // 2026-09-27, at the user's request: superseded the brief per-time-entry
+    // toggle-billable action above with one combined switch per job — see
+    // unlinkedBillToggleHTML(). Flips every unlinked entry to the opposite of
+    // the job's current combined state in one go (self-healing any mixed
+    // state left over from testing the per-entry version).
+    var bkIdToToggle = el.dataset.id;
+    var makeBillable = !unlinkedAllBillable(bkIdToToggle);
+    unlinkedEntriesFor(bkIdToToggle).forEach(function(t){
+      if((t.billable!==false) !== makeBillable){
+        saveDoc('timeEntries', Object.assign({}, t, {billable: makeBillable}));
+      }
+    });
     return;
   }
   if(a==='edit-staff'){ openModal({type:'staff', id:el.dataset.id}); return; }
@@ -3977,6 +4029,11 @@ function handleAction(el){
   if(a==='save-invoice-draft' || a==='send-to-xero'){
     finalizeInvoice(el.dataset.booking, a==='send-to-xero'); return;
   }
+  if(a==='send-existing-invoice'){
+    closeModal();
+    sendInvoiceIdToXero(el.dataset.id, el.dataset.booking);
+    return;
+  }
   if(a==='remove-invoice-photo'){
     var phIdx = Number(el.dataset.idx);
     if(state.invoiceDraft) state.invoiceDraft.photos.splice(phIdx,1);
@@ -4060,17 +4117,41 @@ async function finalizeInvoice(bookingId, send){
     return;
   }
 
+  await sendInvoiceIdToXero(invoice.id, bookingId);
+}
+
+/**
+ * 2026-09-27, at the user's request ("If i save a booking as a draft there
+ * is no button to send the invoice it just has completed and no way to
+ * finish the invoice"): pulled the actual "POST /send, update the booking,
+ * show the right toast" logic out of finalizeInvoice() so it can be reused
+ * from a saved draft invoice's own "Send to Xero" button (see
+ * invoiceModalHTML()'s `m.id` branch, draft status) — not just from the
+ * moment a brand-new invoice is first built. Before this, saving as a draft
+ * left the job with nowhere to go: the booking stayed 'completed' (only the
+ * `send` path ever set it to 'invoiced'), yet the job also silently dropped
+ * out of "Ready to invoice" the moment ANY invoice row existed for it
+ * (invoicingView()'s `invoicedIds` check only ever excludes by status
+ * `!=='void'`, which a `'draft'` status satisfies) — and the invoice modal's
+ * own "already exists" view (the `m.id` branch) never had a send button at
+ * all, for any status. So a saved draft was reachable (via Invoice history,
+ * tagged with its Draft pill) but genuinely a dead end once there.
+ */
+async function sendInvoiceIdToXero(invoiceId, bookingId){
+  var b = getBooking(bookingId);
   // This app now has its own backend (see the "db wiring" note above), so
   // "Send to Xero" is a normal same-origin POST — the backend talks to the
   // Xero connector server-to-server and, on success, attaches any photos
   // too, all before this call returns. No more queueing or waiting.
   toast('Sending to Xero…');
   try{
-    var res = await fetch('/api/invoices/'+invoice.id+'/send', {method:'POST', credentials:'same-origin'});
+    var res = await fetch('/api/invoices/'+invoiceId+'/send', {method:'POST', credentials:'same-origin'});
     var data = await res.json().catch(function(){ return null; });
     if(res.ok && data && data.ok){
-      var updatedBooking = Object.assign({}, b, {status:'invoiced'});
-      saveDoc('bookings', updatedBooking);
+      if(b){
+        var updatedBooking = Object.assign({}, b, {status:'invoiced'});
+        saveDoc('bookings', updatedBooking);
+      }
       localMutate('invoices', data.invoice);
       render();
       // 2026-09-17: previously said nothing about photos at all, even if

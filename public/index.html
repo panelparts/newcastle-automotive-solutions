@@ -3267,11 +3267,8 @@ function serviceItemModalHTML(m){
       '<div class="field"><label>Tax rate</label><select name="taxRate">'+taxOptions+'</select></div>' +
       '<div class="field"><label>Cost price ($, optional)</label><input type="number" name="purchasesUnitPrice" min="0" step="0.01" value="'+(s&&s.purchasesUnitPrice!=null?s.purchasesUnitPrice:'')+'"></div>' +
     '</div>' +
-    '<div class="field"><label>Standard time for this job (optional)</label>' +
-      '<div class="field-row">' +
-        '<div class="field"><label>Hours</label><input type="number" name="durationH" min="0" step="1" value="'+(s&&s.durationMins?Math.floor(s.durationMins/60):'')+'"></div>' +
-        '<div class="field"><label>Mins</label><input type="number" name="durationM" min="0" max="59" step="5" value="'+(s&&s.durationMins?s.durationMins%60:'')+'"></div>' +
-      '</div>' +
+    '<div class="field"><label>Standard time for this job, in minutes (optional)</label>' +
+      '<input type="number" name="durationMins" min="0" step="5" placeholder="e.g. 90" value="'+(s&&s.durationMins?s.durationMins:'')+'">' +
       '<div class="helptext" style="margin-top:2px">When this service is added to a booking, its end time is automatically pushed out by this much.</div>' +
     '</div>' +
     '<label class="check-row"><input type="checkbox" name="active"'+(!s || s.status!=='Archived'?' checked':'')+'> Active — shows up when booking or invoicing jobs</label>' +
@@ -4423,7 +4420,6 @@ function handleFormSubmit(form){
   if(type==='service'){
     var svcId = form.dataset.id || uid('svc');
     var existingSvc = form.dataset.id ? getService(form.dataset.id) : null;
-    var durH = Number(fd.get('durationH'))||0, durM = Number(fd.get('durationM'))||0;
     var svcObj = {
       id: svcId,
       code: fd.get('code'),
@@ -4433,7 +4429,7 @@ function handleFormSubmit(form){
       purchasesDescription: existingSvc ? (existingSvc.purchasesDescription||'') : '',
       purchasesUnitPrice: fd.get('purchasesUnitPrice') ? Number(fd.get('purchasesUnitPrice')) : null,
       taxRate: fd.get('taxRate') || 'GST on Income',
-      durationMins: (durH*60+durM) || 0,
+      durationMins: Number(fd.get('durationMins'))||0,
       status: fd.get('active')==='on' ? 'Active' : 'Archived'
     };
     saveDoc('services', svcObj);

@@ -3829,7 +3829,25 @@ async function finalizeInvoice(bookingId, send){
       // the "photos not getting to Xero" note in the rebuild log). Now the
       // backend reports exactly which photos didn't make it and why
       // (data.photoErrors), surfaced here instead of a plain success toast.
-      var msg = 'Sent to Xero as draft invoice '+(data.invoice.xeroInvoiceNumber||'');
+      // 2026-09-27: this message used to unconditionally say "as draft
+      // invoice" — a leftover from before the 2026-09-25 change that sends
+      // invoices as Approved (Status: AUTHORISED) by default. Nobody
+      // updated this text when that shipped, so every successful send kept
+      // saying "draft" even once the Xero-side behaviour had actually
+      // changed — which is exactly what the user then reported ("invoices
+      // sent to Xero are still going as drafts"). Now reflects what Xero
+      // actually did with it (data.xeroStatus, added the same day on the
+      // backend) rather than assuming; also calls it out explicitly if
+      // Xero silently created it as Draft despite being asked for Approved
+      // (a real, separate possibility — see the backend's own comment on
+      // this) so that's visible without needing to check Xero directly.
+      var xeroStatusWord = data.xeroStatus==='AUTHORISED' ? 'Approved'
+        : data.xeroStatus==='DRAFT' ? 'Draft'
+        : (data.xeroStatus || 'unknown status');
+      var msg = 'Sent to Xero as '+xeroStatusWord+' invoice '+(data.invoice.xeroInvoiceNumber||'');
+      if(data.xeroStatus==='DRAFT'){
+        msg += ' (Xero did not approve it automatically — check the invoice in Xero for why, e.g. an account code or tax setting it didn\'t accept)';
+      }
       if(data.photoErrors && data.photoErrors.length){
         msg += ' — but '+data.photoErrors.length+' photo(s) did not attach. Check the invoice in Xero, and see Account → Xero connection.';
       }

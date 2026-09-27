@@ -778,11 +778,23 @@ async function receiveXeroContactUpdate(request, env) {
 /**
  * Receives the "this invoice changed in Xero" relay from the connector
  * Worker's /webhook handler (see the doc comment at the top of this file).
- * Maps Xero's own Status values onto this app's much smaller status set:
- * VOIDED/DELETED both become this app's 'void' (see the "Mark as void"
- * feature — this is the automatic version of the same thing), and PAID
- * becomes 'paid'. AUTHORISED/SUBMITTED/DRAFT on the Xero side don't need any
- * change here — this app's own 'sent' already covers all of those.
+ *
+ * 2026-09-27, changed at the user's explicit request ("if i delete an
+ * invoice in xero it will delete in the app so I don't end up with
+ * doubles"): VOIDED/DELETED in Xero used to just flip this app's copy to a
+ * 'void' status (kept forever in Invoice history, badged "Void") — the same
+ * thing "Mark as void" does manually. That meant a voided/deleted Xero
+ * invoice stuck around here too, and if the job got invoiced again
+ * afterwards, both the old (void) and new invoice showed in the same list —
+ * exactly the "doubles" being reported. Now VOIDED/DELETED hard-deletes this
+ * app's row instead. The user was offered the safer, reversible option
+ * (just hide void invoices from the list, keep the record) and explicitly
+ * chose the permanent-delete behaviour instead, so that's what this does.
+ * Xero itself is unaffected either way — this only ever touches this app's
+ * own copy, and Xero keeps its own full record regardless.
+ * PAID still just flips this app's copy to 'paid', same as always.
+ * AUTHORISED/SUBMITTED/DRAFT on the Xero side don't need any change here —
+ * this app's own 'sent' already covers all of those.
  */
 async function receiveXeroInvoiceStatus(request, env) {
   const auth = request.headers.get('Authorization') || '';
@@ -799,9 +811,22 @@ async function receiveXeroInvoiceStatus(request, env) {
   const row = await env.DB.prepare('SELECT * FROM invoices WHERE xero_invoice_id = ?').bind(xeroInvoiceId).first();
   if (!row) return json({ ok: true, matched: false }); // not (yet) one of ours — nothing to do
 
+  if (xeroStatus === 'VOIDED' || xeroStatus === 'DELETED') {
+    await env.DB.prepare('DELETE FROM invoices WHERE id = ?').bind(row.id).run();
+    // The booking this invoice came from was flipped to 'invoiced' status the
+    // moment it was sent (see the frontend's "Send to Xero" handler) — with
+    // the invoice itself now gone, put the job back to 'completed' so it
+    // reappears under "Ready to invoice" instead of being stuck invisible
+    // forever (nothing else would ever revert this).
+    if (row.booking_id) {
+      await env.DB.prepare("UPDATE bookings SET status = 'completed' WHERE id = ? AND status = 'invoiced'")
+        .bind(row.booking_id).run();
+    }
+    return json({ ok: true, matched: true, deleted: true });
+  }
+
   let newStatus = null;
-  if (xeroStatus === 'VOIDED' || xeroStatus === 'DELETED') newStatus = 'void';
-  else if (xeroStatus === 'PAID') newStatus = 'paid';
+  if (xeroStatus === 'PAID') newStatus = 'paid';
 
   if (newStatus && newStatus !== row.status) {
     await env.DB.prepare('UPDATE invoices SET status = ? WHERE id = ?').bind(newStatus, row.id).run();

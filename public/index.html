@@ -208,6 +208,21 @@
   .tab-item svg{width:20px;height:20px;flex:none;}
   .tab-item span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .tab-item.active{color:var(--accent);}
+  /* 2026-09-27, at the user's request ("some menus are hard to use due to
+     limited screen space" on iPhone): 7 tabs across a phone-width bottom bar
+     never really had room for full labels — "Customers" was already clipped
+     to "Custom…" even at a standard 375px-wide iPhone, and it only got worse
+     on a smaller one. Rather than restructure the nav (which would move
+     things people already have muscle memory for), this just drops the text
+     label on narrow screens and lets the icon alone fill the tab — the icons
+     were already distinct enough to recognise (they're the same ones used
+     throughout the app), and every tab stays exactly where it's always
+     been, one tap away, nothing removed or hidden behind a menu. */
+  @media (max-width:480px){
+    .tab-item span{display:none;}
+    .tab-item{padding:9px 1px;}
+    .tab-item svg{width:23px;height:23px;}
+  }
 
   @media (min-width:860px){
     .rail{display:flex;}
@@ -2254,7 +2269,10 @@ function railHTML(){
 function tabbarHTML(){
   return '<nav class="tabbar">' +
     NAV_ITEMS.map(function(n){
-      return '<button class="tab-item'+(navItemActive(n)?' active':'')+'" data-action="nav" data-view="'+n.id+'">'+n.icon+'<span>'+n.label+'</span></button>';
+      // aria-label carries the name even on narrow screens where the CSS
+      // above hides the visible <span> text — a screen reader (or a
+      // long-press tooltip) still gets "Customers", not just an icon.
+      return '<button class="tab-item'+(navItemActive(n)?' active':'')+'" data-action="nav" data-view="'+n.id+'" aria-label="'+escapeHtml(n.label)+'">'+n.icon+'<span>'+n.label+'</span></button>';
     }).join('') +
   '</nav>';
 }
@@ -2873,7 +2891,7 @@ function bookingModalHTML(m){
       '<div class="field"><label>Staff</label><select name="staffId" required>'+staffOptions+'</select></div>' +
     '</div>' +
     '<div class="field-row">' +
-      '<div class="field"><label>Reference #</label><input type="text" name="reference" class="mono" value="'+(b?escapeHtml(b.reference||''):'')+'" placeholder="e.g. '+nextJobRef()+' or a PO number" required></div>' +
+      '<div class="field"><label>Reference #</label><input type="text" name="reference" class="mono" value="'+(b?escapeHtml(b.reference||''):'')+'" placeholder="e.g. '+nextJobRef()+'" required></div>' +
       '<div class="field"><label>Job type</label><select name="jobType">'+typeOpts+'</select></div>' +
     '</div>' +
     '<div class="field-row">' +

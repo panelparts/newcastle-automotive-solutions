@@ -2113,14 +2113,41 @@ document.addEventListener('focusout', function(e){
     // (typing sets isEditingTextField() true, so a background poll landing
     // meanwhile sets backgroundRenderPending instead of rendering right
     // away) — which is exactly why an untouched, empty form never showed
-    // it. Fixed by deferring this render with setTimeout(0): that runs in a
-    // fresh task, strictly after the current mousedown/mouseup/click
-    // sequence has already been dispatched, so the click completes on the
-    // DOM as it existed when the user pressed, and the deferred render
-    // (which the user won't visually clash with, since they've already
-    // moved on) happens right after instead of in the middle.
-    setTimeout(function(){
-      if(backgroundRenderPending){ backgroundRenderPending = false; render(); }
+    // it.
+    //
+    // Second pass, 2026-09-27 (the user's still-more-precise repro — "it
+    // only does not work if you fill the reference AND the customer
+    // fields", i.e. real typing time, not just any single field touch):
+    // the original setTimeout(fn, 0) fix above was still wrong. It assumed
+    // mousedown -> focusout -> mouseup -> click all dispatch back-to-back
+    // in one synchronous block, so a "fresh task" queued from focusout
+    // would always run strictly after click. That's only true for a
+    // SCRIPTED click (mousedown and mouseup fired within under a
+    // millisecond of each other — which is exactly how this was
+    // (re-)tested and kept passing). A REAL physical click/tap has a
+    // genuine wall-clock gap between mousedown and mouseup (tens to a few
+    // hundred ms) — plenty of time for an already-queued 0ms timeout to
+    // run *during* that gap, i.e. still in the middle of the user's click,
+    // between their mousedown landing on Add Photo and their mouseup
+    // completing it. When that happens the DOM rebuild replaces the very
+    // node the mousedown landed on, and the browser drops the click
+    // entirely (no matching element left to fire it on) — exactly "first
+    // click does nothing, next one works" once more, just moved one layer
+    // deeper than the first fix reached. Real fix: don't just delay to the
+    // next task — wait until the pointer gesture that caused the blur has
+    // actually finished. `pointerActive` is already set synchronously the
+    // instant *this same* mousedown fires (see below) and only clears
+    // ~50ms after the matching mouseup/touchend, so gating on it (retrying
+    // every 30ms until it's false) guarantees this render can never land
+    // before the click that triggered it has fully completed.
+    setTimeout(function flushWhenGestureDone(){
+      if(!backgroundRenderPending) return;
+      if(isEditingTextField() || filePickerOpen || pointerActive){
+        setTimeout(flushWhenGestureDone, 30);
+        return;
+      }
+      backgroundRenderPending = false;
+      render();
     }, 0);
   }
 });

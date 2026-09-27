@@ -503,6 +503,14 @@ async function sendInvoiceToXero(id, env) {
     customerName: doc.customerName,
     reference: doc.reference,
     lineItems: doc.lineItems.map((li) => ({ description: li.desc, amount: li.amount })),
+    // 2026-09-25, at the user's request: send a finished, "Approved" invoice
+    // in Xero rather than a Draft — the connector's createInvoiceCore()
+    // already supported this via `authorise` (Status: AUTHORISED vs DRAFT),
+    // it just wasn't being set from here. An Approved invoice is ready to
+    // send to the customer and shows correctly in Xero's Awaiting Payment
+    // list, unlike a Draft, which needs a manual approval click in Xero
+    // first before it does anything.
+    authorise: true,
   };
   let xeroRes, xeroBody;
   try {
@@ -574,7 +582,20 @@ async function sendInvoiceToXero(id, env) {
     detail: String((err && err.message) || err),
   }));
 
-  return json({ ok: true, invoice: finalDoc, photoErrors: photoErrors.length ? photoErrors : undefined, photoEmail });
+  // 2026-09-27: surface what Xero actually did with the invoice's Status
+  // (xeroBody.xeroStatus etc., added on the connector side the same day),
+  // rather than assuming the AUTHORISED request we sent was honoured — see
+  // the connector's createInvoiceCore() for why that assumption turned out
+  // to be wrong ("invoices sent to Xero are still going as drafts").
+  return json({
+    ok: true,
+    invoice: finalDoc,
+    photoErrors: photoErrors.length ? photoErrors : undefined,
+    photoEmail,
+    xeroStatus: xeroBody.xeroStatus,
+    xeroValidationErrors: xeroBody.validationErrors || undefined,
+    xeroWarnings: xeroBody.warnings || undefined,
+  });
 }
 
 /* ============================ Email photos to customer ============================ */

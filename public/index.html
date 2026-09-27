@@ -2811,14 +2811,27 @@ function accountView(){
   var usersCard = '';
   if(me.role==='admin'){
     var rows = (state.users||[]).map(function(u){
+      // 2026-09-27, at the user's request ("in the admin staff login
+      // sections can there be a way to send to the email on the user the
+      // instructions and the link to open and use the app"): lets the admin
+      // email a staff member the app link + their login email at any time —
+      // right after creating a login, or later as a resend (new phone, lost
+      // the note it was on, etc.). Only shown for active logins; a
+      // deactivated one has nothing useful to send since it can't sign in.
+      var actions = u.active
+        ? '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">' +
+            '<button type="button" class="btn btn-sm" data-action="send-login-email" data-id="'+u.id+'" data-name="'+escapeHtml(u.name)+'">Email login info</button>' +
+            '<button type="button" class="btn btn-sm btn-danger" data-action="deactivate-user" data-id="'+u.id+'">Deactivate</button>' +
+          '</div>'
+        : '';
       return '<div class="row-between" style="padding:7px 0;border-bottom:1px solid var(--border-soft)">' +
         '<div><strong>'+escapeHtml(u.name)+'</strong>'+(u.active?'':' <span class="helptext">(deactivated)</span>')+'<div class="helptext">'+escapeHtml(u.email)+' · '+(u.role==='admin'?'Admin':'Staff')+'</div></div>' +
-        (u.active ? '<button type="button" class="btn btn-sm btn-danger" data-action="deactivate-user" data-id="'+u.id+'">Deactivate</button>' : '') +
+        actions +
       '</div>';
     }).join('');
     usersCard = '<div class="card card-pad" style="margin-top:14px">' +
         '<div class="section-sub">Staff logins</div>' +
-        '<div class="helptext" style="margin-top:2px">Everyone who uses the app needs their own login. Give each person their email and a temporary password — they can change it themselves from Account once they sign in.</div>' +
+        '<div class="helptext" style="margin-top:2px">Everyone who uses the app needs their own login. Give each person their email and a temporary password (in person or by text) — they can change it themselves from Account once they sign in. Use "Email login info" below to send them the app link and their login email; for security it never includes the password itself.</div>' +
         '<div style="margin-top:8px">'+(rows||'<div class="helptext">No logins yet.</div>')+'</div>' +
         '<form data-form="new-user" style="margin-top:12px;display:flex;flex-direction:column;gap:8px">' +
           '<div class="field-row"><div class="field"><label>Name</label><input type="text" name="name" required></div><div class="field"><label>Email</label><input type="email" name="email" required></div></div>' +
@@ -3995,6 +4008,22 @@ function handleAction(el){
     });
     return;
   }
+  if(a==='send-login-email'){
+    var loginEmailUserId = el.dataset.id;
+    var loginEmailUserName = el.dataset.name || 'them';
+    toast('Sending…');
+    fetch('/api/users/'+encodeURIComponent(loginEmailUserId)+'/send-login-email', {method:'POST', credentials:'same-origin'})
+      .then(function(r){ return r.json().then(function(data){ return {ok:r.ok, data:data}; }); })
+      .then(function(res){
+        if(res.ok && res.data && res.data.ok){
+          toast('Login info emailed to '+loginEmailUserName);
+        } else {
+          toast('Could not email '+loginEmailUserName+' — '+loginEmailErrorMessage(res.data));
+        }
+      })
+      .catch(function(){ toast('Could not reach the server to send that email'); });
+    return;
+  }
   if(a==='remove-invoice-line'){
     var idx = Number(el.dataset.idx);
     state.invoiceDraft.extraLines.splice(idx,1); render(); return;
@@ -4255,6 +4284,19 @@ function xeroEmailNote(xeroEmail){
     return 'Xero would not send the email (permissions) — see Account → Xero connection, may need a disconnect/reconnect.';
   }
   return 'Xero did not email the invoice automatically — check the customer has an email on file, or send it manually from Xero.';
+}
+
+// 2026-09-27: short, specific reason for a failed "Email login info" send
+// (see the send-login-email action above), instead of a bare "failed".
+function loginEmailErrorMessage(data){
+  if(!data) return 'unknown error';
+  if(data.reason === 'email_not_configured') return 'email sending isn\'t set up yet (see DEPLOY.md “Part 6”)';
+  if(data.reason === 'network_error') return 'could not reach the email service';
+  if(data.reason === 'resend_rejected') return (data.detail || 'the email service rejected it');
+  if(data.error === 'user_deactivated') return 'that login is deactivated';
+  if(data.error === 'not_found') return 'that login no longer exists';
+  if(data.error === 'forbidden') return 'not allowed';
+  return data.reason || data.error || 'unknown error';
 }
 
 /* ===================== forms ===================== */

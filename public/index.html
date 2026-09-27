@@ -1804,25 +1804,6 @@ function createRestAssets(apiBase){
   };
 }
 
-/* Catalog collections (services/products) need the full seed list present in the db
-   even when the app itself was already seeded long ago (seedDb() only runs once, the
-   first time 'staff' is empty). Otherwise the moment anyone edits or adds a single
-   item, that collection's onSnapshot returns just that one doc and silently wipes
-   out every other un-persisted catalog item from view. This backfills any seed item
-   whose id isn't already in the db — safe to call every load, never touches existing docs. */
-async function seedCatalogIfMissing(coll, seedArr){
-  try{
-    var snap = await db.collection(coll).get();
-    var existing = {};
-    snap.docs.forEach(function(d){ existing[d.data().id] = true; });
-    var writes = [];
-    seedArr.forEach(function(item){
-      if(!existing[item.id]) writes.push(db.collection(coll).doc(item.id).set(item));
-    });
-    if(writes.length) await Promise.all(writes);
-  }catch(e){ console.warn('catalog backfill failed for '+coll, e); }
-}
-
 var restSubscribed = false;
 function subscribeAll(){
   db.collection('staff').onSnapshot(function(snap){
@@ -1844,8 +1825,18 @@ function subscribeAll(){
 function subscribeRest(){
   if(restSubscribed) return;
   restSubscribed = true;
-  seedCatalogIfMissing('services', SEED_SERVICES);
-  seedCatalogIfMissing('products', SEED_PRODUCTS);
+  // 2026-09-27: this used to also call seedCatalogIfMissing('services', SEED_SERVICES)
+  // and seedCatalogIfMissing('products', SEED_PRODUCTS) here, backfilling any seed
+  // item missing from D1 on every single page load. That was needed once, for
+  // deployments whose catalog rows predated Bug 10's fix — but it can't tell
+  // "never existed yet" apart from "the user deleted it on purpose": deleting a
+  // service/product that came from the original seed list (SEED_SERVICES/
+  // SEED_PRODUCTS) removed it from D1 correctly, then the very next page load
+  // silently recreated it, because its id was "missing" either way. Root cause
+  // of "when i delete a service it comes back and won't stay deleted." The full
+  // seed catalog (36 services + 24 products) has been confirmed present in D1
+  // since the 2026-09-25 restore, so this backfill has already done its one-time
+  // job — removed so a deleted catalog item now actually stays deleted.
   db.collection('settings').onSnapshot(function(snap){
     var rows = snap.docs.map(function(d){ return d.data(); });
     var doc = rows.find(function(r){ return r.id==='company'; });

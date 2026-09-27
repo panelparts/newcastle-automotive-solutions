@@ -1729,6 +1729,23 @@ function subscribeRest(){
   }, function(e){ console.warn('settings sub error', e); });
   db.collection('bookings').onSnapshot(function(snap){
     state.bookings = snap.docs.map(function(d){ return d.data(); });
+    // 2026-09-27, at the user's request ("Timer is running on a different
+    // job" with no other job actually open): the timer is stored per-device
+    // in localStorage (bb_timer) and just holds a bookingId — nothing ever
+    // checked that booking still exists. If that booking was later deleted
+    // (on this device or another), the timer became permanently stuck: the
+    // banner has nothing to link to (getBooking() returns nothing, so it
+    // can't even say whose job it is), and the only UI that could stop a
+    // timer is reached by opening the SAME booking it belongs to — which is
+    // impossible once that booking is gone. Self-heal it here, the moment
+    // fresh booking data confirms the referenced booking is really gone
+    // (not just "not loaded yet" — this runs after every bookings sync, not
+    // just once at boot, so it also catches a booking deleted on another
+    // device after this one's timer started).
+    if(state.timer && !getBooking(state.timer.bookingId)){
+      state.timer = null;
+      safeSet('bb_timer', '');
+    }
     backgroundRender();
   }, function(e){ console.warn('bookings sub error', e); });
 
@@ -2989,7 +3006,19 @@ function timeTrackingBlockHTML(b){
     '</div>';
   } else if(state.timer && state.timer.bookingId!==b.id){
     var otherB = getBooking(state.timer.bookingId);
-    runningBanner = '<div class="helptext" style="margin-bottom:8px;display:flex;align-items:center;gap:6px"><span class="inline-ico">'+ICONS.clock+'</span> Timer is running on a different job'+(otherB?' ('+escapeHtml(otherB.customer.name)+')':'')+'.</div>';
+    // 2026-09-27, at the user's request: this used to be a plain, dead-end
+    // warning — the only way to actually stop that other timer was to find
+    // and open the exact booking it belonged to, which is awkward even when
+    // that job is easy to find, and was a genuine hard stop if it wasn't
+    // (see the bookings onSnapshot fix above for the "booking's been
+    // deleted entirely" case). stopTimerModalHTML() only ever reads from
+    // state.timer, never from whichever booking is currently open, so it's
+    // safe to jump straight to "Stop & log" from here regardless of which
+    // job this banner is showing on.
+    runningBanner = '<div class="helptext" style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:6px">' +
+      '<span style="display:flex;align-items:center;gap:6px"><span class="inline-ico">'+ICONS.clock+'</span> Timer running on '+(otherB?escapeHtml(otherB.customer.name):'another job')+'.</span>' +
+      '<button type="button" class="btn btn-sm" data-action="stop-timer">Stop &amp; log</button>' +
+    '</div>';
   } else if(b.status==='in_progress'){
     runningBanner = '<button type="button" class="btn btn-sm" style="margin-bottom:10px" data-action="start-timer" data-id="'+b.id+'">'+ICONS.play+' Start timer for this job</button>';
   }

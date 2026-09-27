@@ -792,6 +792,19 @@ async function receiveXeroContactUpdate(request, env) {
  * chose the permanent-delete behaviour instead, so that's what this does.
  * Xero itself is unaffected either way — this only ever touches this app's
  * own copy, and Xero keeps its own full record regardless.
+ *
+ * 2026-09-27, extended the same day, again at the user's explicit request
+ * ("If the job has been invoiced and then voided in xero I will not longer
+ * need the booking this also should be deleted and not returned to
+ * completed"): the first version of this reverted the booking back to
+ * 'completed' (so the job reappeared under "Ready to invoice") instead of
+ * deleting it — a deliberate choice at the time, explained back to the user,
+ * but they came back and said no: for how they actually work, voiding an
+ * invoice in Xero means the whole job is off, not "redo the invoice". So the
+ * booking (and its time entries — orphaned without it otherwise, same
+ * reasoning as every other booking-delete in this project, e.g. the full
+ * reset SQL earlier on) is now deleted right along with the invoice.
+ *
  * PAID still just flips this app's copy to 'paid', same as always.
  * AUTHORISED/SUBMITTED/DRAFT on the Xero side don't need any change here —
  * this app's own 'sent' already covers all of those.
@@ -813,16 +826,11 @@ async function receiveXeroInvoiceStatus(request, env) {
 
   if (xeroStatus === 'VOIDED' || xeroStatus === 'DELETED') {
     await env.DB.prepare('DELETE FROM invoices WHERE id = ?').bind(row.id).run();
-    // The booking this invoice came from was flipped to 'invoiced' status the
-    // moment it was sent (see the frontend's "Send to Xero" handler) — with
-    // the invoice itself now gone, put the job back to 'completed' so it
-    // reappears under "Ready to invoice" instead of being stuck invisible
-    // forever (nothing else would ever revert this).
     if (row.booking_id) {
-      await env.DB.prepare("UPDATE bookings SET status = 'completed' WHERE id = ? AND status = 'invoiced'")
-        .bind(row.booking_id).run();
+      await env.DB.prepare('DELETE FROM time_entries WHERE booking_id = ?').bind(row.booking_id).run();
+      await env.DB.prepare('DELETE FROM bookings WHERE id = ?').bind(row.booking_id).run();
     }
-    return json({ ok: true, matched: true, deleted: true });
+    return json({ ok: true, matched: true, deleted: true, bookingDeleted: !!row.booking_id });
   }
 
   let newStatus = null;

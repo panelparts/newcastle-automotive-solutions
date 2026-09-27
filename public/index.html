@@ -382,6 +382,12 @@
   .te-row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:13px;}
   .te-desc{color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .te-dur{font-family:var(--font-mono);font-weight:600;flex:none;}
+  .te-bill-toggle{
+    border:1px solid var(--st-completed);background:var(--st-completed-soft);color:var(--st-completed);
+    border-radius:999px;padding:2.5px 9px;font-size:10px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.03em;cursor:pointer;white-space:nowrap;flex:none;
+  }
+  .te-bill-toggle.off{background:var(--surface-2);color:var(--ink-faint);border-color:var(--border);}
 
   .week-bar-row{display:flex;align-items:center;gap:10px;padding:7px 0;}
   .wbr-label{width:76px;flex:none;font-size:12.5px;font-weight:600;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -3118,12 +3124,24 @@ function timeTrackingBlockHTML(b){
   var unlinked = unlinkedMinutesFor(b.id);
   var rows = entries.length ? entries.map(function(t){
     var itemName = bookingItemLabel(b, t.itemId);
-    // Item-linked time never hits the auto Labour line either way (that's
-    // the point of linking it), so only unlinked, explicitly-not-billable
-    // time gets the "not billed" tag — it's the one case that's easy to miss.
-    var notBilled = (!t.itemId && t.billable===false) ? ' <span class="helptext">(not billed)</span>' : '';
-    return '<div class="te-row"><span class="te-desc">'+escapeHtml(staffName(t.staffId))+(itemName?' · '+escapeHtml(itemName):'')+(t.note?' · '+escapeHtml(t.note):'')+notBilled+'</span>' +
-      '<span style="display:flex;align-items:center;gap:8px"><span class="te-dur">'+fmtHrsMin(t.minutes)+'</span>' +
+    // 2026-09-27, at the user's request, after finding the auto-complete/
+    // auto-pause timer logging (added same day, see the set-status handler)
+    // had quietly removed their ability to choose whether a piece of time
+    // counts toward the invoice — "we had the timer on a check box... this
+    // has gone, it adds the time to every invoice automatically." Rather
+    // than bringing back a dialog on every complete/pause (undoing the
+    // "no extra dialog" fix from earlier the same day), the choice now lives
+    // here instead: a tap-to-flip "Billed"/"Not billed" toggle on each time
+    // entry, so it can still be changed any time before the job is invoiced,
+    // whichever way it was logged. Item-linked time never hits the auto
+    // Labour line either way (that's the whole point of linking it to a
+    // priced job item) — the billable flag only ever means anything for
+    // unlinked time, so only unlinked entries get a toggle at all.
+    var billToggle = !t.itemId
+      ? '<button type="button" class="te-bill-toggle'+(t.billable===false?' off':'')+'" data-action="toggle-billable" data-id="'+t.id+'">'+(t.billable===false?'Not billed':'Billed')+'</button>'
+      : '';
+    return '<div class="te-row"><span class="te-desc">'+escapeHtml(staffName(t.staffId))+(itemName?' · '+escapeHtml(itemName):'')+(t.note?' · '+escapeHtml(t.note):'')+'</span>' +
+      '<span style="display:flex;align-items:center;gap:8px">'+billToggle+'<span class="te-dur">'+fmtHrsMin(t.minutes)+'</span>' +
       '<button type="button" class="icon-btn" style="width:24px;height:24px" data-action="delete-time" data-id="'+t.id+'">'+ICONS.close+'</button></span></div>';
   }).join('') : '<div class="helptext">No time logged yet.</div>';
 
@@ -3736,16 +3754,27 @@ function handleAction(el){
     var b = getBooking(el.dataset.id);
     if(b){
       var wasBooked = b.status==='booked';
+      var wasOnHold = b.status==='on_hold';
       var updated = Object.assign({}, b, {status: el.dataset.status}); saveDoc('bookings', updated);
       if(state.modal && state.modal.type==='booking') state.modal = {type:'booking', id:b.id};
-      if(wasBooked && el.dataset.status==='in_progress'){
+      if((wasBooked || wasOnHold) && el.dataset.status==='in_progress'){
+        // 2026-09-27, at the user's request, after testing "Pause"/"Resume"
+        // live: resuming a paused job used to leave it In Progress with no
+        // timer running (the tech had to separately hit "Start timer for
+        // this job") — same as starting a brand-new job used to, before that
+        // got an auto-start timer too. Reported back as a real bug ("the job
+        // timer does not restart when resume is pushed"), so Resume now
+        // auto-starts a fresh timer exactly like starting a booked job does,
+        // just with its own toast wording. This is always a brand-new timer
+        // segment — the paused segment was already logged as its own time
+        // entry when the job was paused (see the on_hold branch below).
         if(!state.timer){
           state.timer = {bookingId: b.id, staffId: state.meId || b.staffId, startedAt: Date.now()};
           safeSet('bb_timer', JSON.stringify(state.timer));
           render();
-          toast('Job started — timer running');
+          toast(wasOnHold ? 'Job resumed — timer running' : 'Job started — timer running');
         } else if(state.timer.bookingId!==b.id){
-          toast('Job started — timer is still running on a different job');
+          toast((wasOnHold ? 'Job resumed' : 'Job started')+' — timer is still running on a different job');
         }
       } else if((el.dataset.status==='completed' || el.dataset.status==='on_hold') && state.timer && state.timer.bookingId===b.id){
         // 2026-09-27, at the user's request ("can we make the timer stop as
@@ -3794,6 +3823,14 @@ function handleAction(el){
   if(a==='delete-time'){
     var teId = el.dataset.id;
     removeDoc('timeEntries', teId);
+    return;
+  }
+  if(a==='toggle-billable'){
+    var teToToggle = state.timeEntries.find(function(t){ return t.id===el.dataset.id; });
+    if(teToToggle){
+      var toggled = Object.assign({}, teToToggle, {billable: teToToggle.billable===false});
+      saveDoc('timeEntries', toggled);
+    }
     return;
   }
   if(a==='edit-staff'){ openModal({type:'staff', id:el.dataset.id}); return; }
@@ -4060,6 +4097,14 @@ async function finalizeInvoice(bookingId, send){
       if(data.xeroStatus==='DRAFT'){
         msg += ' (Xero did not approve it automatically — check the invoice in Xero for why, e.g. an account code or tax setting it didn\'t accept)';
       }
+      // 2026-09-27, at the user's request ("it is adding the invoice to xero
+      // but not email the invoice to the customer, it needs to approve and
+      // email"): the backend now also calls Xero's own "Approve & email"
+      // action (data.xeroEmail) — surfaced the same way as the photo-attach
+      // and photo-email outcomes just below, so a failure here is just as
+      // visible instead of the invoice silently sitting in Xero unsent.
+      var xeroEmailNoteMsg = xeroEmailNote(data.xeroEmail);
+      if(xeroEmailNoteMsg) msg += ' ' + xeroEmailNoteMsg;
       if(data.photoErrors && data.photoErrors.length){
         msg += ' — but '+data.photoErrors.length+' photo(s) did not attach. Check the invoice in Xero, and see Account → Xero connection.';
       }
@@ -4095,6 +4140,21 @@ function photoEmailNote(photoEmail){
     return 'Photos were not emailed — email sending isn\'t set up yet (see Account).';
   }
   return ''; // no_photos / no_booking_linked / no_customer_linked / no_email_on_file / no_photo_bytes_available — nothing to flag
+}
+
+// 2026-09-27: same idea as photoEmailNote() above, for the actual Xero
+// invoice email (data.xeroEmail) rather than the photos-via-Resend one.
+// Unlike photos, there's no legitimate "nothing to email" case here once an
+// invoice is Approved — a failure is always worth a heads-up, since it means
+// the customer has an unpaid invoice they don't know about yet.
+function xeroEmailNote(xeroEmail){
+  if(!xeroEmail) return '';
+  if(xeroEmail.sent) return 'Emailed to the customer via Xero.';
+  if(xeroEmail.reason === 'not_authorised') return ''; // already covered by the Draft warning above
+  if(xeroEmail.reason === 'insufficient_scope'){
+    return 'Xero would not send the email (permissions) — see Account → Xero connection, may need a disconnect/reconnect.';
+  }
+  return 'Xero did not email the invoice automatically — check the customer has an email on file, or send it manually from Xero.';
 }
 
 /* ===================== forms ===================== */

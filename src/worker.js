@@ -569,6 +569,34 @@ async function sendInvoiceToXero(id, env) {
   const updatedRow = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
   const finalDoc = def.toDoc(updatedRow);
 
+  // 2026-09-27, at the user's request ("when we push a invoice to xero it is
+  // adding the invoice to xero but not email the invoice to the customer, it
+  // needs to approve and email"): creating the invoice in Xero was never the
+  // same thing as sending it — Xero only emails an invoice out when something
+  // explicitly asks it to (the "Approve & email" button in its own UI, or
+  // this same API call). This is the actual Xero-generated invoice email
+  // (its own template/branding), completely separate from
+  // emailPhotosToCustomer() below, which only ever sends the job photos via
+  // Resend and says nothing about the invoice itself.
+  //
+  // Only attempted when Xero actually authorised the invoice (xeroStatus,
+  // just above) — Xero can't email a Draft, and per the 2026-09-27 "still
+  // going as drafts" fix, `authorise: true` in the request is not a
+  // guarantee of that; trusting what Xero actually did avoids a confusing
+  // second failure on top of whatever already stopped it being authorised.
+  // Never blocks or fails the invoice send itself, same non-fatal pattern as
+  // photoErrors/photoEmail below.
+  let xeroEmail;
+  if (xeroBody.xeroStatus === 'AUTHORISED') {
+    xeroEmail = await emailInvoiceViaXero(env, xeroBody.invoiceId).catch((err) => ({
+      sent: false,
+      reason: 'exception',
+      detail: String((err && err.message) || err),
+    }));
+  } else {
+    xeroEmail = { sent: false, reason: 'not_authorised', detail: 'Xero created this invoice as ' + (xeroBody.xeroStatus || 'unknown') + ', not Approved — see xeroValidationErrors/xeroWarnings below for why.' };
+  }
+
   // 2026-09-18, at the user's request: also email the invoice's photos
   // straight to the customer, the moment the invoice is sent — see
   // emailPhotosToCustomer() below for exactly what it does and doesn't do.
@@ -592,10 +620,38 @@ async function sendInvoiceToXero(id, env) {
     invoice: finalDoc,
     photoErrors: photoErrors.length ? photoErrors : undefined,
     photoEmail,
+    xeroEmail,
     xeroStatus: xeroBody.xeroStatus,
     xeroValidationErrors: xeroBody.validationErrors || undefined,
     xeroWarnings: xeroBody.warnings || undefined,
   });
+}
+
+/**
+ * 2026-09-27: calls the connector's POST /internal/invoices/{id}/email,
+ * which in turn calls Xero's own POST /Invoices/{InvoiceID}/Email — see the
+ * doc comment on sendInvoiceToXero() above for why, and the connector's
+ * handleInternalEmail() for exactly what Xero needs for this to succeed and
+ * the one open verification gap (this endpoint's exact required OAuth
+ * scope). Mirrors attachPhotoToXero()'s shape/error-handling below.
+ */
+async function emailInvoiceViaXero(env, xeroInvoiceId) {
+  try {
+    const res = await env.XERO_WORKER.fetch(
+      'https://xero-worker.internal/internal/invoices/' + encodeURIComponent(xeroInvoiceId) + '/email',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + env.XERO_INTERNAL_TOKEN },
+      }
+    );
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body || !body.ok) {
+      return { sent: false, reason: (body && body.error) || 'http_' + res.status, detail: body && body.message };
+    }
+    return { sent: true };
+  } catch (err) {
+    return { sent: false, reason: 'exception', detail: String((err && err.message) || err) };
+  }
 }
 
 /* ============================ Email photos to customer ============================ */

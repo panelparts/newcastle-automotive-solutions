@@ -2795,8 +2795,26 @@ function bookingModalHTML(m){
       '<div class="field"><label>Phone</label><input type="tel" name="custPhone" value="'+(b?escapeHtml(b.customer.phone||''):'')+'"></div>' +
     '</div>' +
     '<datalist id="customer-names-list">'+state.customers.map(function(c){return '<option value="'+escapeHtml(c.name)+'">';}).join('')+'</datalist>' +
-    '<div class="helptext" id="cust-match-hint" style="'+(getCustomer((b||{}).customerId)?'':'display:none')+'">Matches an existing contact — their saved details will fill in.</div>' +
-    '<label class="check-row" id="save-contact-row" style="'+(getCustomer((b||{}).customerId)?'display:none':'')+'"><input type="checkbox" name="saveContact" checked> Save as a customer contact for next time</label>' +
+    /* 2026-09-25, real root cause found (attempt 7): the user's own repro
+       narrowed this to "type customer + job details, THEN the Add Photo
+       click visibly shifts and misses" — the Photos section sits directly
+       below this Customer name block in the form (see bookingModalHTML's
+       field order), and this hint/checkbox pair toggles which one is
+       visible on every keystroke in Customer name (cust-name-input's
+       'input' listener, findCustomerByName()). Toggling `display` between
+       'none' and '' changes how much vertical space this row takes, which
+       shifts Photos (and everything else below it) up or down in real time
+       as the user types or as a match is found/lost — exactly the visible
+       "it moves a tiny bit" the user described, and exactly why it only
+       ever showed up once customer details had actually been typed. Fixed
+       by reserving constant space for this row (a fixed-height wrapper) and
+       swapping `visibility` instead of `display` — both elements now always
+       occupy the same space, so nothing below them (Photos included) can
+       ever shift as a result of typing here again. */
+    '<div style="min-height:26px">' +
+    '<div class="helptext" id="cust-match-hint" style="'+(getCustomer((b||{}).customerId)?'':'visibility:hidden')+'">Matches an existing contact — their saved details will fill in.</div>' +
+    '<label class="check-row" id="save-contact-row" style="'+(getCustomer((b||{}).customerId)?'visibility:hidden':'')+'"><input type="checkbox" name="saveContact" checked> Save as a customer contact for next time</label>' +
+    '</div>' +
     '<div class="field-row">' +
       '<div class="field"><label>Vehicle rego</label><input type="text" name="rego" value="'+(b?escapeHtml(b.vehicle.rego):'')+'"></div>' +
       '<div class="field"><label>Make / model</label><input type="text" name="makeModel" value="'+(b?escapeHtml(b.vehicle.makeModel):'')+'"></div>' +
@@ -4133,16 +4151,20 @@ function wirePostRender(){
       var match = findCustomerByName(custNameInput.value);
       var hint = document.getElementById('cust-match-hint');
       var saveRow = document.getElementById('save-contact-row');
+      // Match the markup's approach (see bookingModalHTML, "attempt 7"
+      // comment): toggle visibility, not display, so this row's space never
+      // changes size as the user types — nothing below it (Photos included)
+      // shifts as a result any more.
       if(match){
-        if(hint) hint.style.display = '';
-        if(saveRow) saveRow.style.display = 'none';
+        if(hint) hint.style.visibility = 'visible';
+        if(saveRow) saveRow.style.visibility = 'hidden';
         var phoneEl = document.querySelector('#booking-form [name=custPhone]');
         if(phoneEl && !phoneEl.value) phoneEl.value = match.phone || '';
         var addrEl = document.querySelector('#booking-form [name=address]');
         if(addrEl && !addrEl.value) addrEl.value = match.address || '';
       } else {
-        if(hint) hint.style.display = 'none';
-        if(saveRow) saveRow.style.display = '';
+        if(hint) hint.style.visibility = 'hidden';
+        if(saveRow) saveRow.style.visibility = 'visible';
       }
     });
   }

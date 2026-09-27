@@ -3258,8 +3258,8 @@ function serviceItemModalHTML(m){
       '<div class="field"><label>Tax rate</label><select name="taxRate">'+taxOptions+'</select></div>' +
       '<div class="field"><label>Cost price ($, optional)</label><input type="number" name="purchasesUnitPrice" min="0" step="0.01" value="'+(s&&s.purchasesUnitPrice!=null?s.purchasesUnitPrice:'')+'"></div>' +
     '</div>' +
-    '<div class="field"><label>Standard time for this job, in minutes (optional)</label>' +
-      '<input type="number" name="durationMins" min="0" step="5" placeholder="e.g. 90" value="'+(s&&s.durationMins?s.durationMins:'')+'">' +
+    '<div class="field"><label>Standard time for this job, in hours (optional)</label>' +
+      '<input type="number" name="durationHrs" min="0" step="0.25" placeholder="e.g. 1.5" value="'+(s&&s.durationMins?(Math.round((s.durationMins/60)*100)/100):'')+'">' +
       '<div class="helptext" style="margin-top:2px">When this service is added to a booking, its end time is automatically pushed out by this much.</div>' +
     '</div>' +
     '<label class="check-row"><input type="checkbox" name="active"'+(!s || s.status!=='Archived'?' checked':'')+'> Active — shows up when booking or invoicing jobs</label>' +
@@ -4420,7 +4420,7 @@ function handleFormSubmit(form){
       purchasesDescription: existingSvc ? (existingSvc.purchasesDescription||'') : '',
       purchasesUnitPrice: fd.get('purchasesUnitPrice') ? Number(fd.get('purchasesUnitPrice')) : null,
       taxRate: fd.get('taxRate') || 'GST on Income',
-      durationMins: Number(fd.get('durationMins'))||0,
+      durationMins: Math.round((Number(fd.get('durationHrs'))||0)*60),
       status: fd.get('active')==='on' ? 'Active' : 'Archived'
     };
     saveDoc('services', svcObj);

@@ -101,6 +101,12 @@ async function routeApi(request, env, url) {
   if (path === '/users' && method === 'GET') return listUsers(env, user);
   if (path === '/users' && method === 'POST') return createUser(request, env, user);
   if (path.match(/^\/users\/[^/]+$/) && method === 'DELETE') return deactivateUser(path, env, user);
+  // 2026-09-27, at the user's request ("in the admin staff login sections
+  // can there be a way to send to the email on the user the instructions and
+  // the link to open and use the app") — see sendLoginEmail() below.
+  if (path.match(/^\/users\/[^/]+\/send-login-email$/) && method === 'POST') {
+    return sendLoginEmail(path, request, env, user);
+  }
   if (path === '/me/password' && method === 'POST') return changeOwnPassword(request, env, user);
 
   const collMatch = path.match(/^\/collections\/([a-zA-Z]+)(?:\/([^/]+))?$/);
@@ -299,6 +305,82 @@ async function deactivateUser(path, env, user) {
   const id = path.split('/')[2];
   await env.DB.prepare('UPDATE users SET active = 0 WHERE id = ?').bind(id).run();
   await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run();
+  return json({ ok: true });
+}
+
+/**
+ * 2026-09-27, at the user's request ("in the admin staff login sections can
+ * there be a way to send to the email on the user the instructions and the
+ * link to open and use the app"): emails a staff member the app's link and
+ * their login email, from the "Staff logins" card on the Account screen
+ * (admin only) — usable right after creating a login, or any time later as
+ * a resend (someone lost the text/note it was on, a new phone, etc.).
+ *
+ * Deliberately never includes the actual password. It could, for a login
+ * that was JUST created (the plaintext temp password is still in the
+ * browser's own form at that moment) — but this endpoint has to also work
+ * as a plain resend for an existing login, where the server genuinely
+ * doesn't have the password any more (only its PBKDF2 hash, per
+ * hashPassword()/verifyPassword() — see the auth section above) and never
+ * should. One path that works the same way every time, with nothing
+ * sensitive in an email, was worth more than saving the admin one retype.
+ * The instructions below tell the tech to get the password from whoever set
+ * up their login instead.
+ *
+ * Uses the same Resend setup as emailPhotosToCustomer() above (same
+ * required secrets/vars, same DEPLOY.md "Part 6" one-time setup) — see that
+ * function's own doc comment for the full explanation and what happens if
+ * Resend isn't configured yet.
+ */
+async function sendLoginEmail(path, request, env, adminUser) {
+  if (adminUser.role !== 'admin') return json({ error: 'forbidden' }, 403);
+  const id = path.split('/')[2];
+  const target = await env.DB.prepare('SELECT id, name, email, active FROM users WHERE id = ?').bind(id).first();
+  if (!target) return json({ error: 'not_found' }, 404);
+  if (!target.active) return json({ error: 'user_deactivated' }, 400);
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM_ADDRESS) {
+    return json({ ok: false, reason: 'email_not_configured' });
+  }
+
+  // The app serves its own frontend (see the top-level fetch() handler
+  // above), so the request that hit this very endpoint already came in on
+  // the app's real public URL — no separate "app URL" setting to configure
+  // or let go stale.
+  const appUrl = new URL(request.url).origin;
+  const fromName = env.EMAIL_FROM_NAME || 'Newcastle Automotive Solutions';
+  const html =
+    '<p>Hi ' + escapeHtml(target.name || '') + ',</p>' +
+    '<p>You\'ve been given a login for ' + escapeHtml(fromName) + '\'s job app. ' +
+    'Open it here and sign in:</p>' +
+    '<p><a href="' + escapeHtml(appUrl) + '">' + escapeHtml(appUrl) + '</a></p>' +
+    '<p>Your login email is <strong>' + escapeHtml(target.email || '') + '</strong> — use the password ' +
+    'you were given when your login was set up. Once you\'re signed in, you can change it yourself from ' +
+    'the Account tab.</p>' +
+    '<p>If you don\'t have the password, ask whoever set up your login to give it to you again.</p>' +
+    '<p>' + escapeHtml(fromName) + '</p>';
+
+  let res, body;
+  try {
+    res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + env.RESEND_API_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: fromName + ' <' + env.EMAIL_FROM_ADDRESS + '>',
+        to: [target.email],
+        subject: 'Your ' + fromName + ' app login',
+        html,
+      }),
+    });
+    body = await res.json().catch(() => ({}));
+  } catch (err) {
+    return json({ ok: false, reason: 'network_error', detail: String((err && err.message) || err) });
+  }
+  if (!res.ok) {
+    return json({ ok: false, reason: 'resend_rejected', detail: (body && body.message) || ('http_' + res.status) });
+  }
   return json({ ok: true });
 }
 

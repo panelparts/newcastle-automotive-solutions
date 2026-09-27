@@ -1432,17 +1432,39 @@ function buildSeedInvoices(){
 }
 
 /* ===================== state ===================== */
+// 2026-09-27: staff/bookings/timeEntries/invoices/customers/services/products
+// used to start out holding the original demo/sample data (SEED_STAFF,
+// buildSeedBookings(), etc.) instead of empty arrays, on the theory that it
+// kept the screen from looking blank for the instant before the real D1 data
+// loads. Reported as "3 original jobs flash up on the screen and disappear"
+// on every reload — that's exactly this: 3 of buildSeedBookings()'s 6 sample
+// jobs are dated "today", so they're what the Schedule tab's default
+// day/today view shows for that first instant, before subscribeAll()'s real
+// bookings subscription lands and replaces them. Same latent issue existed
+// for staff/customers/services/products/invoices/time entries too — just
+// less noticeable since this app now has real data in most of those, so the
+// flash swaps one non-empty list for another instead of "3 jobs → nothing".
+// Clearing history/cache doesn't touch this — it's not a caching bug, this
+// sample data is baked into the page's own JS and runs fresh every load.
+// Fixed by starting all of these empty, same as `users` already did — the
+// empty-state UI every view already has ("No jobs booked for this day", "No
+// customers match...", etc.) covers the brief real gap correctly and
+// honestly, instead of a flash of fake data. SEED_STAFF/buildSeedBookings()
+// etc. are kept, unchanged — seedDb() (a few lines below) still uses them to
+// populate a genuinely brand-new, empty deployment's database the first time
+// 'staff' comes back empty from D1; that's server data, not this client
+// state, so it's unaffected by this change.
 var state = {
   currentUser: null,
   users: [],
   settings: Object.assign({}, DEFAULT_SETTINGS),
-  staff: SEED_STAFF.slice(),
-  bookings: buildSeedBookings(),
-  timeEntries: buildSeedTime(),
-  invoices: buildSeedInvoices(),
-  customers: SEED_CUSTOMERS.slice(),
-  services: SEED_SERVICES.slice(),
-  products: SEED_PRODUCTS.slice(),
+  staff: [],
+  bookings: [],
+  timeEntries: [],
+  invoices: [],
+  customers: [],
+  services: [],
+  products: [],
   view: 'schedule',
   selectedDate: todayISO(),
   scheduleMode: 'day',
@@ -1770,8 +1792,13 @@ function subscribeAll(){
   db.collection('staff').onSnapshot(function(snap){
     var rows = snap.docs.map(function(d){ return d.data(); });
     if(rows.length===0 && !seededOnce){
+      // Genuinely brand-new deployment (D1 has no staff yet) — populate it
+      // with the sample data. Until that finishes, state's own arrays are
+      // just empty (see the note above the `state` object) — that's fine,
+      // every view already has a normal empty-state message for "no data
+      // yet", and it's only ever visible for this one-time bootstrap.
       seedDb().then(subscribeRest);
-      return; // keep showing local sample data until seeding lands
+      return;
     }
     state.staff = rows;
     backgroundRender();

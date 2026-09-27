@@ -3424,7 +3424,18 @@ function invoiceModalHTML(m){
   }
   var unlinkedMins = unlinkedMinutesFor(b.id);
   var laborAmt = (unlinkedMins/60) * b.rate;
-  var laborLine = '<div class="line-item-row"><div class="li-desc">Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)</div><div class="li-amt">'+fmtMoney(laborAmt)+'</div></div>';
+  // 2026-09-27, at the user's request ("Can the labour mechanical line only
+  // show on the invoice if the time recorded billed button is active"):
+  // previously always showed this line, even at $0.00 when the combined
+  // Billed/Not billed switch was off — a zeroed-out line item on a real
+  // invoice reads as a mistake, not as "nothing to bill here". Now the line
+  // itself disappears whenever there's no billable unlinked time (either the
+  // switch is off, or there's simply no unlinked time logged at all) —
+  // exactly mirrors finalizeInvoice()'s own lineItems construction below, so
+  // what gets shown here on the draft screen matches what's actually saved.
+  var laborLine = unlinkedMins
+    ? '<div class="line-item-row"><div class="li-desc">Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)</div><div class="li-amt">'+fmtMoney(laborAmt)+'</div></div>'
+    : '';
   // 2026-09-27, at the user's request ("this option also needs to be on the
   // invoice screen"): same combined Billed/Not billed switch as the
   // booking's own Time logged card (unlinkedBillToggleHTML()), shown right
@@ -4090,7 +4101,15 @@ async function finalizeInvoice(bookingId, send){
   var unlinkedMins = unlinkedMinutesFor(bookingId);
   var laborAmt = (unlinkedMins/60)*b.rate;
   var extra = state.invoiceDraft ? state.invoiceDraft.extraLines : [];
-  var lineItems = [{desc:'Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)', amount:laborAmt}];
+  // 2026-09-27, at the user's request ("Can the labour mechanical line only
+  // show on the invoice if the time recorded billed button is active") — see
+  // the matching comment on invoiceModalHTML()'s laborLine above. This is the
+  // line items array that actually gets saved (and, once sent, pushed to
+  // Xero), so this is the real fix; the draft-screen change just keeps the
+  // preview honest about what's about to be saved.
+  var lineItems = unlinkedMins
+    ? [{desc:'Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)', amount:laborAmt}]
+    : [];
   extra.forEach(function(l){
     var linkedMins = l.itemId ? minutesForItem(bookingId, l.itemId) : 0;
     var desc = l.desc+' ('+l.qty+' × '+fmtMoney(l.unitPrice)+(linkedMins?' · '+fmtHrsMin(linkedMins)+' logged':'')+')';

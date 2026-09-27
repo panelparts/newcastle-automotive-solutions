@@ -3613,6 +3613,24 @@ function handleAction(el){
         } else if(state.timer.bookingId!==b.id){
           toast('Job started — timer is still running on a different job');
         }
+      } else if(el.dataset.status==='completed' && state.timer && state.timer.bookingId===b.id){
+        // 2026-09-27, at the user's request ("can we make the timer stop as
+        // soon as the complete button is used"): previously "Mark complete"
+        // only changed the booking's status — the timer kept running until
+        // someone separately opened the job and hit "Stop & log", easy to
+        // forget once the job's already marked done. Now, if the timer
+        // that's running belongs to THIS job, completing it auto-logs the
+        // elapsed time (same minutes calculation stopTimerModalHTML() uses)
+        // as a normal, billable time entry and clears the timer — no extra
+        // dialog, matching the ask for this to just happen automatically.
+        // A timer running on a *different* job is left alone; only this
+        // job's own timer is affected by completing it.
+        var finMin = Math.max(1, Math.round((Date.now()-state.timer.startedAt)/60000));
+        var fte = {id: uid('t'), bookingId: state.timer.bookingId, staffId: state.timer.staffId, date: todayISO(), minutes: finMin, note: null, itemId: null, billable: true, createdAt: Date.now()};
+        saveDoc('timeEntries', fte);
+        state.timer = null; safeSet('bb_timer','');
+        render();
+        toast('Job completed — '+fmtHrsMin(finMin)+' logged from timer');
       }
     }
     return;

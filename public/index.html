@@ -1479,12 +1479,21 @@ function jobsCountForCustomer(id){ return state.bookings.filter(function(b){ ret
 // the long comment above that field in bookingModalHTML() for why this
 // replaced a native <datalist> (broken on iOS Safari). Matches anywhere in
 // the name, not just the start, same as the Customers list's own search.
+// 2026-09-27, fixed same-day: the first version of this returned '' for an
+// empty query, so tapping into an untouched Customer name field showed no
+// customers at all until you'd typed at least one character — reported as
+// "now have no customers on the desktop version and the mobile version".
+// The native <datalist> it replaced used to show the *whole* customer list
+// the moment you clicked in (on browsers where datalist worked at all, i.e.
+// desktop), so this was a real regression there, not just a carry-over of
+// the original iOS bug. Fixed by treating an empty query as "show
+// everything" — same approach bookingServiceResultsHTML already uses for
+// the Job items search box just below this field.
 function custNameSuggestHTML(q){
   q = (q||'').trim().toLowerCase();
-  if(!q) return '';
   var list = state.customers.filter(function(c){
-    return c.name.toLowerCase().indexOf(q)>-1;
-  }).sort(function(a,b){ return a.name.localeCompare(b.name); }).slice(0,6);
+    return !q || c.name.toLowerCase().indexOf(q)>-1;
+  }).sort(function(a,b){ return a.name.localeCompare(b.name); }).slice(0,20);
   if(!list.length) return '';
   return list.map(function(c){
     return '<div class="cust-suggest-item" data-action="pick-customer-suggestion" data-id="'+c.id+'">' +

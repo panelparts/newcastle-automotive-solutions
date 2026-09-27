@@ -4207,7 +4207,19 @@ function wirePostRender(){
 /* ===================== global listeners (bound once) ===================== */
 document.addEventListener('click', function(e){
   if(e.target && e.target.id==='confirm-backdrop'){ state.confirmDelete = null; state.confirmVoid = null; render(); return; }
-  if(e.target && e.target.id==='modal-backdrop'){ closeModal(); return; }
+  // 2026-09-27, at the user's request ("if I click off the screen it
+  // disappears and I lose all the info"): a tap that lands on the dark
+  // area around a modal — easy to do by accident on a phone, especially
+  // one-handed or with gloves/dirty hands on-site — used to close the
+  // modal immediately via closeModal(), silently discarding anything
+  // typed into it (booking details, a new customer, etc.), since none of
+  // these forms keep a draft once closed. Every modal already has an
+  // explicit X in its header (and almost all have an explicit Cancel/Close
+  // button too — see modalShell()), so closing is never actually blocked,
+  // just no longer one accidental mis-tap away. Deliberately NOT touching
+  // confirm-backdrop above — those are plain yes/no popups (delete/void)
+  // with no typed data to lose, so tapping outside them to dismiss is
+  // still safe and left as-is.
   var el = e.target.closest('[data-action]');
   if(el){ handleAction(el); return; }
 });

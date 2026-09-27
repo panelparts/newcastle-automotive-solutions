@@ -421,6 +421,26 @@
   .field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
   .field-row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
   @media (max-width:360px){ .field-row3{grid-template-columns:1fr 1fr;} }
+
+  /* Customer name tap-to-pick suggestions (see bookingModalHTML/wirePostRender,
+     "iOS datalist" comment) — a floating overlay, not an inline list, and
+     that's deliberate: Photos and several other fields sit below Customer
+     name in the form, and Bug 14 already taught this codebase (the hard way,
+     11 attempts) that even a small height change in this area shifts
+     everything below it and causes real mis-clicks on Photos. An
+     absolutely-positioned overlay can never do that — it floats above the
+     fields below instead of pushing them down. */
+  .cust-suggest-wrap{position:relative;}
+  .cust-suggest{
+    position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:40;
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-s);
+    box-shadow:0 8px 24px rgba(20,20,19,.18);max-height:220px;overflow:auto;
+  }
+  .cust-suggest-item{padding:9px 11px;cursor:pointer;border-bottom:1px solid var(--border-soft);}
+  .cust-suggest-item:last-child{border-bottom:none;}
+  .cust-suggest-item:active{background:var(--surface-2);}
+  .cust-suggest-name{font-size:13.5px;font-weight:600;}
+  .cust-suggest-meta{font-size:11.5px;color:var(--ink-faint);margin-top:1px;}
   svg{flex:none;}
   .timer-idle-icon{display:inline-flex;width:34px;height:34px;color:var(--ink-faint);}
   .timer-idle-icon svg{width:100%;height:100%;}
@@ -1455,6 +1475,24 @@ function findCustomerByName(name){
   return state.customers.find(function(c){ return c.name.trim().toLowerCase()===n; }) || null;
 }
 function jobsCountForCustomer(id){ return state.bookings.filter(function(b){ return b.customerId===id; }).length; }
+// Tap-to-pick suggestions for the booking form's Customer name field — see
+// the long comment above that field in bookingModalHTML() for why this
+// replaced a native <datalist> (broken on iOS Safari). Matches anywhere in
+// the name, not just the start, same as the Customers list's own search.
+function custNameSuggestHTML(q){
+  q = (q||'').trim().toLowerCase();
+  if(!q) return '';
+  var list = state.customers.filter(function(c){
+    return c.name.toLowerCase().indexOf(q)>-1;
+  }).sort(function(a,b){ return a.name.localeCompare(b.name); }).slice(0,6);
+  if(!list.length) return '';
+  return list.map(function(c){
+    return '<div class="cust-suggest-item" data-action="pick-customer-suggestion" data-id="'+c.id+'">' +
+      '<div class="cust-suggest-name">'+escapeHtml(c.name)+'</div>' +
+      (c.phone?'<div class="cust-suggest-meta">'+escapeHtml(c.phone)+'</div>':'') +
+    '</div>';
+  }).join('');
+}
 function upsertCustomerVehicle(cust, rego, makeModel){
   var vehicles = (cust.vehicles||[]).slice();
   var regoNorm = (rego||'').trim().toLowerCase();
@@ -2835,10 +2873,24 @@ function bookingModalHTML(m){
     '</div>' +
     '<hr class="divider">' +
     '<div class="field-row">' +
-      '<div class="field"><label>Customer name</label><input type="text" id="cust-name-input" name="custName" list="customer-names-list" value="'+(b?escapeHtml(b.customer.name):'')+'" required></div>' +
+      '<div class="field cust-suggest-wrap"><label>Customer name</label><input type="text" id="cust-name-input" name="custName" value="'+(b?escapeHtml(b.customer.name):'')+'" autocomplete="off" required>' +
+        '<div class="cust-suggest" id="cust-name-suggest" style="display:none"></div>' +
+      '</div>' +
       '<div class="field"><label>Phone</label><input type="tel" name="custPhone" value="'+(b?escapeHtml(b.customer.phone||''):'')+'"></div>' +
     '</div>' +
-    '<datalist id="customer-names-list">'+state.customers.map(function(c){return '<option value="'+escapeHtml(c.name)+'">';}).join('')+'</datalist>' +
+    /* 2026-09-27: this field used to be driven by a native <input list="...">
+       datalist (see customer-names-list, removed) — iOS/Mobile Safari never
+       shows the suggestion dropdown for <datalist> on a text input at all, so
+       on an iPhone this field looked like there was no way to browse/pick an
+       existing customer (reported as "the customer list isn't available").
+       Replaced with custNameSuggestHTML() below, a plain tappable list built
+       and wired the same way as the already-fixed Job items search box
+       (bookingServiceResultsHTML) — except floated as an absolutely-positioned
+       overlay (.cust-suggest) rather than an inline list, because Photos and
+       several other fields sit below Customer name here, and an inline list
+       growing/shrinking as you type would shift them — exactly the class of
+       bug Bug 14 took 11 attempts to run down. An overlay can't shift
+       anything below it. */
     /* 2026-09-25, real root cause found (attempt 7): the user's own repro
        narrowed this to "type customer + job details, THEN the Add Photo
        click visibly shifts and misses" — the Photos section sits directly
@@ -2863,6 +2915,12 @@ function bookingModalHTML(m){
       '<div class="field"><label>Vehicle rego</label><input type="text" name="rego" value="'+(b?escapeHtml(b.vehicle.rego):'')+'"></div>' +
       '<div class="field"><label>Make / model</label><input type="text" name="makeModel" value="'+(b?escapeHtml(b.vehicle.makeModel):'')+'"></div>' +
     '</div>' +
+    // 2026-09-27: reverted the "default to checked" change from earlier
+    // today — the user confirmed they want this to stay a deliberate,
+    // unticked-by-default option (not auto-on like "Save as a customer
+    // contact"), and clarified the real problem is that ticking it still
+    // doesn't save the vehicle. See the 2026-09-27 investigation notes
+    // under "Known simplifications" below for what was actually found.
     '<label class="check-row"><input type="checkbox" name="saveVehicle"> Also save this vehicle to the customer\'s record</label>' +
     '<div class="field"><label>Job address</label><input type="text" name="address" value="'+(b?escapeHtml(b.address):'')+'" required></div>' +
     '<div class="field"><label>Hourly rate ($/hr, ex GST)</label><input type="number" name="rate" min="0" step="5" value="'+(b?b.rate:state.settings.labourRate)+'" required></div>' +
@@ -3663,6 +3721,22 @@ function handleAction(el){
     addBookingServiceItem(getService(el.dataset.id));
     return;
   }
+  if(a==='pick-customer-suggestion'){
+    var pickedCust = getCustomer(el.dataset.id);
+    var cnInput = document.getElementById('cust-name-input');
+    if(pickedCust && cnInput){
+      cnInput.value = pickedCust.name;
+      // Not render() — this is a plain form field the same way every other
+      // booking-form input is (see snapshotFormFields()/restoreFormFields());
+      // a full render() mid-form-fill is exactly what Bug 14 spent 11
+      // attempts undoing. Firing a real 'input' event instead lets the
+      // existing cust-name-input listener do its normal job: autofill
+      // phone/address, flip the "matches an existing contact" hint, and
+      // close this suggestions overlay (see refreshCustSuggest()).
+      cnInput.dispatchEvent(new Event('input', {bubbles:true}));
+    }
+    return;
+  }
   if(a==='remove-booking-service'){
     var bsIdx = Number(el.dataset.idx);
     if(state.bookingDraft){
@@ -4238,6 +4312,20 @@ function wirePostRender(){
     });
   }
   var custNameInput = document.getElementById('cust-name-input');
+  var custSuggestBox = document.getElementById('cust-name-suggest');
+  function refreshCustSuggest(){
+    if(!custSuggestBox || !custNameInput) return;
+    var match = findCustomerByName(custNameInput.value);
+    // Once the typed text exactly matches an existing customer, the hint
+    // line below already says so — showing the overlay too would just be a
+    // redundant list sitting open over the field. This also has the nice
+    // effect of auto-closing the overlay the moment a suggestion is tapped,
+    // since picking one sets the input to that exact name (see
+    // pick-customer-suggestion below).
+    var html = match ? '' : custNameSuggestHTML(custNameInput.value);
+    if(html){ custSuggestBox.innerHTML = html; custSuggestBox.style.display = 'block'; }
+    else { custSuggestBox.innerHTML = ''; custSuggestBox.style.display = 'none'; }
+  }
   if(custNameInput){
     custNameInput.addEventListener('input', function(){
       var match = findCustomerByName(custNameInput.value);
@@ -4258,7 +4346,31 @@ function wirePostRender(){
         if(hint) hint.style.visibility = 'hidden';
         if(saveRow) saveRow.style.visibility = 'visible';
       }
+      refreshCustSuggest();
     });
+    // Re-open the suggestions if the field already has text and is tapped
+    // back into (e.g. editing a booking, or returning to fix a typo).
+    custNameInput.addEventListener('focus', refreshCustSuggest);
+    // A real blur (tapping some other field, or away from the form
+    // entirely) should close the overlay. A *tap on a suggestion itself*
+    // must not trigger this first — see the mousedown handler below, which
+    // heads that off before it can happen.
+    custNameInput.addEventListener('blur', function(){
+      if(custSuggestBox) custSuggestBox.style.display = 'none';
+    });
+  }
+  if(custSuggestBox){
+    // Standard mobile-Safari-safe autocomplete technique: preventDefault on
+    // mousedown stops the browser's default "move focus" action for this
+    // tap, so cust-name-input never blurs (and the overlay never closes)
+    // while someone is tapping a suggestion — the click that follows right
+    // after (handled as data-action="pick-customer-suggestion") still lands
+    // on it normally. Without this, tapping a suggestion on a touchscreen
+    // would blur the field and hide the overlay before the tap's own click
+    // event had a chance to register — the same family of "click missed
+    // because something moved/vanished underneath it" bug as Bug 14, just
+    // via blur instead of a re-render.
+    custSuggestBox.addEventListener('mousedown', function(e){ e.preventDefault(); });
   }
   clearInterval(timerInterval);
   if(state.timer){

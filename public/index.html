@@ -674,7 +674,8 @@ var ICONS = {
   contact:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.3" y="4" width="15.4" height="12" rx="1.8"/><circle cx="7.4" cy="9" r="1.7"/><path d="M4.9 13.4c.4-1.6 1.4-2.4 2.5-2.4s2.1.8 2.5 2.4M11.6 8h4M11.6 10.4h4"/></svg>',
   phone:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.2l2.1.5.7 2.4-1.4 1.5a9 9 0 005 5l1.5-1.4 2.4.7.5 2.1a1.3 1.3 0 01-1.3 1.5A11.4 11.4 0 013.5 4.5 1.3 1.3 0 015 3.2z"/></svg>',
   mail:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="15" height="11" rx="1.6"/><path d="M3.2 5.3L10 11l6.8-5.7"/></svg>',
-  gear:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.6v2.1M10 15.3v2.1M17.4 10h-2.1M4.7 10H2.6M15.1 4.9l-1.5 1.5M6.4 13.6l-1.5 1.5M15.1 15.1l-1.5-1.5M6.4 6.4L4.9 4.9"/></svg>'
+  gear:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.6v2.1M10 15.3v2.1M17.4 10h-2.1M4.7 10H2.6M15.1 4.9l-1.5 1.5M6.4 13.6l-1.5 1.5M15.1 15.1l-1.5-1.5M6.4 6.4L4.9 4.9"/></svg>',
+  chart:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.3 16.7V10M9.1 16.7V4.3M14.9 16.7V8.6"/><path d="M2.4 16.7h15.2"/></svg>'
 };
 
 /* ===================== brand logo ===================== */
@@ -1503,6 +1504,20 @@ var state = {
   confirmDelete: null,
   confirmVoid: null,
   confirmBillTime: null,
+  // 2026-09-28, at the user's request ("in the admin section... a report
+  // section that allows me to run the following report"): filter/selection
+  // state for the Reports screen (reportsView(), below accountView()).
+  // reportsRange/reportsCustomFrom/reportsCustomTo pick the date window every
+  // report reads; reportsType picks which report is showing; the rest are
+  // per-report options (sales-over-time's grouping + scope, time-logged's
+  // staff/job toggle).
+  reportsRange: 'month',
+  reportsCustomFrom: null,
+  reportsCustomTo: null,
+  reportsType: 'overview',
+  reportsSalesGroupBy: 'day',
+  reportsSalesScope: 'all',
+  reportsTimeGroupBy: 'staff',
   timer: null,
   xeroInfoOpen: false,
   xeroStatus: null,
@@ -2039,7 +2054,7 @@ var NAV_ITEMS = [
 // Account (see the "Team" card in accountView()) instead of its own tab.
 // Both views (timeView(), staffView()) still exist and still work — staff is
 // just reached via a button in Account now, not a persistent tab.
-var VIEW_TITLES = {schedule:'Schedule', jobs:'Jobs', customers:'Customers', time:'Time Tracking', invoicing:'Invoicing', services:'Services', products:'Products', staff:'Staff', account:'Account'};
+var VIEW_TITLES = {schedule:'Schedule', jobs:'Jobs', customers:'Customers', time:'Time Tracking', invoicing:'Invoicing', services:'Services', products:'Products', staff:'Staff', account:'Account', reports:'Reports'};
 
 /* ===================== render: shell ===================== */
 /* render() rebuilds the whole page from scratch via innerHTML every time it's
@@ -2357,8 +2372,10 @@ function topbarHTML(){
 function navItemActive(n){
   // Staff no longer has its own tab (it's reached from inside Account), so
   // highlight Account as the active nav item while viewing it there too.
+  // Reports (2026-09-28, admin-only) follows the exact same pattern — no tab
+  // of its own, reached from a button inside Account, same highlighting.
   if(state.view===n.id) return true;
-  if(n.id==='account' && state.view==='staff') return true;
+  if(n.id==='account' && (state.view==='staff' || state.view==='reports')) return true;
   return false;
 }
 function railHTML(){
@@ -2390,6 +2407,7 @@ function viewHTML(){
   if(state.view==='products') return productsView();
   if(state.view==='staff') return staffView();
   if(state.view==='account') return accountView();
+  if(state.view==='reports') return reportsView();
   return '';
 }
 
@@ -2882,6 +2900,19 @@ function accountView(){
       '</div>';
   }
 
+  // 2026-09-28, at the user's request ("in the admin section, employees with
+  // admin access can i have a report section..."): same admin-only gate as
+  // Staff logins just above — reportsView() itself also checks this, so
+  // going there any other way still shows nothing to a non-admin.
+  var reportsCard = '';
+  if(me.role==='admin'){
+    reportsCard = '<div class="card card-pad" style="margin-top:14px">' +
+        '<div class="row-between"><div><div class="section-sub">Reports</div>' +
+        '<div class="helptext" style="margin-top:2px">Sales, time logged, and job-mix reports across the business.</div></div>' +
+        '<button type="button" class="btn btn-sm" data-action="nav" data-view="reports">'+ICONS.chart+' Open reports →</button></div>' +
+      '</div>';
+  }
+
   return '' +
     '<div class="section-head"><div><div class="section-title">Account</div><div class="section-sub">Company details and billing defaults used across bookings and invoices.</div></div></div>' +
     '<form id="account-form" data-form="account-settings">' +
@@ -2904,7 +2935,404 @@ function accountView(){
       '</div>' +
       '<button type="submit" class="btn btn-primary btn-block" style="margin-top:14px">Save changes</button>' +
     '</form>' +
-    xeroCard + youCard + teamCard + usersCard;
+    xeroCard + youCard + teamCard + usersCard + reportsCard;
+}
+
+/* ===================== REPORTS ===================== */
+// 2026-09-28, at the user's request ("In the admin section, employees with
+// admin access can i have a report section that allows me to run the
+// following report. Product sales via week, day, month. Sales per user,
+// Time spent on jobs, per user or per job. Any other report you think I
+// might need to help understand the business."): admin-only reporting
+// screen, reached from the "Open reports →" button on Account (see
+// reportsCard above) and gated a second time here in case state.view is
+// ever set to 'reports' any other way.
+//
+// Design notes:
+//  - "Sales" only ever counts invoices with status 'sent' or 'paid' — a
+//    'draft' invoice isn't a completed sale yet and a 'void' one was
+//    cancelled, so both are excluded everywhere revenue is summed.
+//  - An invoice's date, for filtering/bucketing, is sentAt (when it was
+//    actually sent/paid) falling back to createdAt for the rare case
+//    sentAt is missing. See invoiceDateISO().
+//  - Every report reads the SAME date-range state (reportsRange, plus
+//    reportsCustomFrom/To for the 'custom' preset) so switching report
+//    type keeps whatever range you'd picked.
+//  - "Product sales via week, day, month" is the Sales-over-time report's
+//    day/week/month grouping toggle (reportsSalesGroupBy), not a separate
+//    report per granularity.
+//  - Revenue/time is credited to a job's staffId (who it was booked
+//    under) — this app doesn't track which staff member actually did the
+//    work as a separate field, so that's the closest real signal.
+//  - Added two reports beyond exactly what was asked, since both are
+//    cheap to build from data already on hand and are the kind of thing
+//    a mobile mechanical/ADAS fleet business would want: Job type mix
+//    (mechanical vs ADAS vs both — useful for staffing/equipment
+//    planning) and Top customers by revenue (useful for knowing who to
+//    look after).
+
+var REPORT_TYPES = [
+  {id:'overview', label:'Overview'},
+  {id:'sales_time', label:'Sales over time'},
+  {id:'top_items', label:'Top products & services'},
+  {id:'sales_staff', label:'Sales per staff'},
+  {id:'time_logged', label:'Time logged'},
+  {id:'job_mix', label:'Job type mix'},
+  {id:'top_customers', label:'Top customers'}
+];
+var REPORT_RANGES = [
+  {id:'today', label:'Today'},
+  {id:'week', label:'This week'},
+  {id:'month', label:'This month'},
+  {id:'year', label:'This year'},
+  {id:'all', label:'All time'},
+  {id:'custom', label:'Custom'}
+];
+
+function reportsDateRange(){
+  var today = todayISO();
+  var preset = state.reportsRange;
+  if(preset==='custom'){
+    return { from: state.reportsCustomFrom || null, to: state.reportsCustomTo || today };
+  }
+  if(preset==='today') return { from: today, to: today };
+  if(preset==='week'){
+    var dow = new Date(today+'T00:00:00').getDay(); // 0=Sun..6=Sat
+    var back = dow===0 ? 6 : dow-1; // days since Monday
+    return { from: addDays(today, -back), to: today };
+  }
+  if(preset==='month') return { from: today.slice(0,7)+'-01', to: today };
+  if(preset==='year') return { from: today.slice(0,4)+'-01-01', to: today };
+  return { from: null, to: null }; // 'all'
+}
+
+// Groups a day-level ISO date into the key for its bucket. Week buckets are
+// Monday-start, keyed by that Monday's ISO date so they sort correctly
+// alongside day/month keys (all plain ISO strings).
+function reportBucketKey(iso, groupBy){
+  if(groupBy==='month') return iso.slice(0,7);
+  if(groupBy==='week'){
+    var dow = new Date(iso+'T00:00:00').getDay();
+    var back = dow===0 ? 6 : dow-1;
+    return addDays(iso, -back);
+  }
+  return iso; // day
+}
+function reportBucketLabel(key, groupBy){
+  if(groupBy==='month'){
+    return new Date(key+'-01T00:00:00').toLocaleDateString('en-AU',{month:'short', year:'numeric'});
+  }
+  if(groupBy==='week') return 'Wk of '+fmtDateShort(key);
+  return fmtDateShort(key);
+}
+
+// Infers a line item's kind for invoices saved before 2026-09-28 (see the
+// matching comment in finalizeInvoice() where kind/catalogId were added).
+// Old lines have no `kind` field at all; the labour line's description is
+// always distinctive ("Labour — <job type> (...)"), so that's detectable.
+// Anything else predates the change and can't be told apart as service vs
+// product from text alone — it's bucketed as 'other' rather than guessed.
+function reportLineKind(li){
+  if(li.kind) return li.kind;
+  if(/^Labour\s*—/.test(li.desc||'')) return 'labour';
+  return 'other';
+}
+// Every line's desc ends with a "(qty × price ...)" parenthetical (see
+// finalizeInvoice()) — stripping it gives the clean item/labour name for
+// both current and historical invoices, so grouping by this label works
+// as a fallback even for lines with no catalogId.
+function reportLineLabel(li){
+  var d = (li.desc||'').replace(/\s*\([^)]*\)\s*$/, '').trim();
+  return d || (li.desc||'(unnamed item)');
+}
+
+function reportInvoicesBase(){
+  return state.invoices.filter(function(iv){ return iv.status==='sent' || iv.status==='paid'; });
+}
+function invoiceDateISO(iv){
+  var ts = iv.sentAt || iv.createdAt;
+  return ts ? isoLocalDate(new Date(ts)) : null;
+}
+function reportsFilterByRange(invoices, range){
+  return invoices.filter(function(iv){
+    var d = invoiceDateISO(iv);
+    if(!d) return false;
+    if(range.from && d<range.from) return false;
+    if(range.to && d>range.to) return false;
+    return true;
+  });
+}
+
+function reportOverview(invoices){
+  var count = invoices.length, subtotal=0, gst=0, total=0;
+  invoices.forEach(function(iv){ subtotal += iv.subtotal||0; gst += iv.gst||0; total += iv.total||0; });
+  return { count:count, subtotal:subtotal, gst:gst, total:total, avg: count ? total/count : 0 };
+}
+
+function reportSalesOverTime(invoices, groupBy, scope){
+  var buckets = {};
+  invoices.forEach(function(iv){
+    var d = invoiceDateISO(iv);
+    if(!d) return;
+    var key = reportBucketKey(d, groupBy);
+    (iv.lineItems||[]).forEach(function(li){
+      if(scope!=='all' && reportLineKind(li)!==scope) return;
+      buckets[key] = (buckets[key]||0) + (li.amount||0);
+    });
+  });
+  var keys = Object.keys(buckets).sort();
+  var max = keys.reduce(function(m,k){ return Math.max(m, buckets[k]); }, 0);
+  return keys.map(function(k){
+    return { key:k, label: reportBucketLabel(k, groupBy), amount: buckets[k], pct: max ? Math.round(buckets[k]/max*100) : 0 };
+  });
+}
+
+function reportTopItems(invoices){
+  var groups = {};
+  invoices.forEach(function(iv){
+    (iv.lineItems||[]).forEach(function(li){
+      var kind = reportLineKind(li);
+      if(kind==='labour') return; // labour has its own line in the overview/sales-over-time scope filter
+      var label = reportLineLabel(li);
+      var key = kind+'|'+label;
+      if(!groups[key]) groups[key] = { label:label, kind:kind, revenue:0, qty:0 };
+      groups[key].revenue += li.amount||0;
+      groups[key].qty += li.qty||0;
+    });
+  });
+  return Object.keys(groups).map(function(k){ return groups[k]; }).sort(function(a,b){ return b.revenue-a.revenue; });
+}
+
+function reportSalesPerStaff(invoices){
+  var byStaff = {};
+  invoices.forEach(function(iv){
+    var b = getBooking(iv.bookingId);
+    var staffId = b ? b.staffId : null;
+    var key = staffId || '_unassigned';
+    if(!byStaff[key]) byStaff[key] = { staffId:staffId, revenue:0, count:0 };
+    byStaff[key].revenue += iv.total||0;
+    byStaff[key].count += 1;
+  });
+  return Object.keys(byStaff).map(function(k){
+    var row = byStaff[k];
+    var s = row.staffId ? getStaff(row.staffId) : null;
+    row.name = s ? s.name : 'Unassigned';
+    row.color = s ? s.color : '#9a9a9a';
+    return row;
+  }).sort(function(a,b){ return b.revenue-a.revenue; });
+}
+
+function reportTimeLogged(range, groupMode){
+  var entries = state.timeEntries.filter(function(t){
+    if(range.from && t.date<range.from) return false;
+    if(range.to && t.date>range.to) return false;
+    return true;
+  });
+  if(groupMode==='job'){
+    var byJob = {};
+    entries.forEach(function(t){
+      if(!byJob[t.bookingId]) byJob[t.bookingId] = { bookingId:t.bookingId, minutes:0 };
+      byJob[t.bookingId].minutes += t.minutes||0;
+    });
+    return Object.keys(byJob).map(function(k){
+      var row = byJob[k];
+      var b = getBooking(row.bookingId);
+      row.label = b ? joinParts([b.customer.name, b.vehicle && b.vehicle.rego]) : 'Deleted job';
+      row.color = null;
+      return row;
+    }).sort(function(a,b){ return b.minutes-a.minutes; });
+  }
+  var byStaff = {};
+  entries.forEach(function(t){
+    var key = t.staffId || '_unassigned';
+    if(!byStaff[key]) byStaff[key] = { staffId:t.staffId, minutes:0 };
+    byStaff[key].minutes += t.minutes||0;
+  });
+  return Object.keys(byStaff).map(function(k){
+    var row = byStaff[k];
+    var s = row.staffId ? getStaff(row.staffId) : null;
+    row.label = s ? s.name : 'Unassigned';
+    row.color = s ? s.color : null;
+    return row;
+  }).sort(function(a,b){ return b.minutes-a.minutes; });
+}
+
+function reportJobTypeMix(range){
+  var bookings = state.bookings.filter(function(b){
+    if(range.from && b.date<range.from) return false;
+    if(range.to && b.date>range.to) return false;
+    return true;
+  });
+  var counts = {};
+  bookings.forEach(function(b){ counts[b.jobType] = (counts[b.jobType]||0)+1; });
+  var total = bookings.length;
+  return Object.keys(JOB_TYPE_LABEL).map(function(k){
+    var c = counts[k]||0;
+    return { key:k, label: JOB_TYPE_LABEL[k], count:c, pct: total ? Math.round(c/total*100) : 0 };
+  });
+}
+
+function reportTopCustomers(invoices){
+  var byCust = {};
+  invoices.forEach(function(iv){
+    var b = getBooking(iv.bookingId);
+    var custId = b ? b.customerId : null;
+    var cust = custId ? getCustomer(custId) : null;
+    var key = custId || ('name:'+iv.customerName);
+    if(!byCust[key]) byCust[key] = { customerId:custId, name: cust ? cust.name : (iv.customerName||'Unknown'), revenue:0, count:0 };
+    byCust[key].revenue += iv.total||0;
+    byCust[key].count += 1;
+  });
+  return Object.keys(byCust).map(function(k){ return byCust[k]; }).sort(function(a,b){ return b.revenue-a.revenue; });
+}
+
+function reportsView(){
+  var me = state.currentUser || {};
+  if(me.role!=='admin'){
+    return '<div class="section-head"><div><div class="section-title">Reports</div></div></div>' +
+      '<div class="empty">Reports are only available to admins.</div>';
+  }
+
+  var range = reportsDateRange();
+  var invoices = reportsFilterByRange(reportInvoicesBase(), range);
+
+  var rangeChips = REPORT_RANGES.map(function(r){
+    return '<button class="chip'+(state.reportsRange===r.id?' active':'')+'" data-action="set-reports-range" data-range="'+r.id+'">'+r.label+'</button>';
+  }).join('');
+  var customRow = state.reportsRange==='custom'
+    ? '<div class="field-row" style="margin-top:10px">' +
+        '<div class="field"><label>From</label><input type="date" data-change="reports-custom-from" value="'+(state.reportsCustomFrom||'')+'"></div>' +
+        '<div class="field"><label>To</label><input type="date" data-change="reports-custom-to" value="'+(state.reportsCustomTo||'')+'"></div>' +
+      '</div>'
+    : '';
+  var typeChips = REPORT_TYPES.map(function(t){
+    return '<button class="chip'+(state.reportsType===t.id?' active':'')+'" data-action="set-reports-type" data-type="'+t.id+'">'+t.label+'</button>';
+  }).join('');
+
+  return '' +
+    '<button type="button" class="btn btn-quiet btn-sm" data-action="nav" data-view="account" style="margin-bottom:10px">'+ICONS.chevL+' Back to Account</button>' +
+    '<div class="section-head"><div><div class="section-title">Reports</div><div class="section-sub">Sales, time logged, and job-mix reports across the business.</div></div></div>' +
+    '<div class="card card-pad">' +
+      '<div class="section-sub">Date range</div>' +
+      '<div class="chip-row" style="margin-top:8px">'+rangeChips+'</div>' +
+      customRow +
+    '</div>' +
+    '<div class="chip-row" style="margin-top:14px">'+typeChips+'</div>' +
+    '<div style="margin-top:12px">'+reportsBodyHTML(range, invoices)+'</div>';
+}
+
+function reportsBodyHTML(range, invoices){
+  if(state.reportsType==='sales_time') return reportSalesTimeHTML(invoices);
+  if(state.reportsType==='top_items') return reportTopItemsHTML(invoices);
+  if(state.reportsType==='sales_staff') return reportSalesStaffHTML(invoices);
+  if(state.reportsType==='time_logged') return reportTimeLoggedHTML(range);
+  if(state.reportsType==='job_mix') return reportJobMixHTML(range);
+  if(state.reportsType==='top_customers') return reportTopCustomersHTML(invoices);
+  return reportOverviewHTML(invoices);
+}
+
+function reportStatBlockHTML(label, val){
+  return '<div style="flex:1;min-width:130px"><div class="helptext">'+label+'</div>' +
+    '<div style="font-family:var(--font-display);font-size:21px;font-weight:700;margin-top:2px">'+val+'</div></div>';
+}
+function reportOverviewHTML(invoices){
+  var o = reportOverview(invoices);
+  return '<div class="card card-pad" style="display:flex;flex-wrap:wrap;gap:18px 14px">' +
+      reportStatBlockHTML('Invoices', o.count) +
+      reportStatBlockHTML('Revenue (ex GST)', fmtMoney(o.subtotal)) +
+      reportStatBlockHTML('GST collected', fmtMoney(o.gst)) +
+      reportStatBlockHTML('Total incl. GST', fmtMoney(o.total)) +
+      reportStatBlockHTML('Avg. invoice', fmtMoney(o.avg)) +
+    '</div>';
+}
+
+function reportBarRowHTML(label, pct, valText, color){
+  return '<div class="week-bar-row"><span class="wbr-label" title="'+escapeHtml(label)+'">'+escapeHtml(label)+'</span>' +
+    '<div class="wbr-track"><div class="wbr-fill" style="width:'+pct+'%'+(color?';background:'+color:'')+'"></div></div>' +
+    '<span class="wbr-val">'+valText+'</span></div>';
+}
+
+function reportSalesTimeHTML(invoices){
+  var groupChips = ['day','week','month'].map(function(g){
+    var label = g.charAt(0).toUpperCase()+g.slice(1);
+    return '<button class="chip'+(state.reportsSalesGroupBy===g?' active':'')+'" data-action="set-reports-salesgroup" data-group="'+g+'">'+label+'</button>';
+  }).join('');
+  var scopes = [{id:'all',label:'All'},{id:'labour',label:'Labour'},{id:'service',label:'Services'},{id:'product',label:'Products'}];
+  var scopeChips = scopes.map(function(sc){
+    return '<button class="chip'+(state.reportsSalesScope===sc.id?' active':'')+'" data-action="set-reports-salesscope" data-scope="'+sc.id+'">'+sc.label+'</button>';
+  }).join('');
+  var rows = reportSalesOverTime(invoices, state.reportsSalesGroupBy, state.reportsSalesScope);
+  var capNote = '';
+  if(rows.length>30){ rows = rows.slice(rows.length-30); capNote = '<div class="helptext" style="margin-top:8px">Showing the most recent 30 '+state.reportsSalesGroupBy+' periods in range.</div>'; }
+  var bars = rows.length ? rows.map(function(r){ return reportBarRowHTML(r.label, r.pct, fmtMoney(r.amount)); }).join('') : '<div class="empty">No sales in this range.</div>';
+  return '<div class="card card-pad">' +
+      '<div class="row-between" style="flex-wrap:wrap;gap:8px"><div class="section-sub">Group by</div><div class="chip-row">'+groupChips+'</div></div>' +
+      '<div class="row-between" style="flex-wrap:wrap;gap:8px;margin-top:10px"><div class="section-sub">Scope</div><div class="chip-row">'+scopeChips+'</div></div>' +
+      '<div style="margin-top:14px">'+bars+'</div>' + capNote +
+    '</div>';
+}
+
+function reportTopItemsHTML(invoices){
+  var rows = reportTopItems(invoices).slice(0,25);
+  if(!rows.length) return '<div class="empty">No product or service sales in this range.</div>';
+  var max = rows.reduce(function(m,r){ return Math.max(m,r.revenue); }, 0);
+  var list = rows.map(function(r){
+    var pct = max ? Math.round(r.revenue/max*100) : 0;
+    var kindLabel = r.kind==='product' ? 'Product' : r.kind==='service' ? 'Service' : 'Other';
+    return reportBarRowHTML(r.label, pct, fmtMoney(r.revenue)) +
+      '<div class="helptext" style="margin:-3px 0 6px 86px">'+kindLabel+' · '+r.qty+' sold</div>';
+  }).join('');
+  return '<div class="card card-pad">'+list+'</div>';
+}
+
+function reportSalesStaffHTML(invoices){
+  var rows = reportSalesPerStaff(invoices);
+  if(!rows.length) return '<div class="empty">No sales in this range.</div>';
+  var max = rows.reduce(function(m,r){ return Math.max(m,r.revenue); }, 0);
+  var list = rows.map(function(r){
+    var pct = max ? Math.round(r.revenue/max*100) : 0;
+    return reportBarRowHTML(r.name, pct, fmtMoney(r.revenue), r.color);
+  }).join('');
+  return '<div class="card card-pad">'+list +
+    '<div class="helptext" style="margin-top:8px">Revenue is credited to the staff member each job was booked under.</div></div>';
+}
+
+function reportTimeLoggedHTML(range){
+  var modes = [{id:'staff',label:'Per staff'},{id:'job',label:'Per job'}];
+  var modeChips = modes.map(function(m){
+    return '<button class="chip'+(state.reportsTimeGroupBy===m.id?' active':'')+'" data-action="set-reports-timegroup" data-group="'+m.id+'">'+m.label+'</button>';
+  }).join('');
+  var rows = reportTimeLogged(range, state.reportsTimeGroupBy);
+  if(!rows.length){
+    return '<div class="card card-pad"><div class="chip-row">'+modeChips+'</div><div class="empty" style="margin-top:12px">No time logged in this range.</div></div>';
+  }
+  var max = rows.reduce(function(m,r){ return Math.max(m,r.minutes); }, 0);
+  var capNote = rows.length>30 ? '<div class="helptext" style="margin-top:8px">Showing the top 30.</div>' : '';
+  var list = rows.slice(0,30).map(function(r){
+    var pct = max ? Math.round(r.minutes/max*100) : 0;
+    return reportBarRowHTML(r.label, pct, fmtHrsMin(r.minutes), r.color);
+  }).join('');
+  return '<div class="card card-pad"><div class="chip-row">'+modeChips+'</div><div style="margin-top:14px">'+list+'</div>'+capNote+'</div>';
+}
+
+function reportJobMixHTML(range){
+  var rows = reportJobTypeMix(range);
+  var total = rows.reduce(function(a,r){ return a+r.count; }, 0);
+  if(!total) return '<div class="empty">No jobs booked in this range.</div>';
+  var list = rows.map(function(r){ return reportBarRowHTML(r.label, r.pct, String(r.count)); }).join('');
+  return '<div class="card card-pad">'+list +
+    '<div class="helptext" style="margin-top:8px">'+total+' job'+(total===1?'':'s')+' booked in this range.</div></div>';
+}
+
+function reportTopCustomersHTML(invoices){
+  var rows = reportTopCustomers(invoices).slice(0,25);
+  if(!rows.length) return '<div class="empty">No sales in this range.</div>';
+  var list = rows.map(function(r){
+    return '<div class="row-between" style="padding:9px 0;border-bottom:1px solid var(--border-soft)">' +
+      '<span>'+escapeHtml(r.name)+'<span class="helptext"> · '+r.count+' invoice'+(r.count===1?'':'s')+'</span></span>' +
+      '<span class="mono" style="font-weight:600">'+fmtMoney(r.revenue)+'</span></div>';
+  }).join('');
+  return '<div class="card card-pad">'+list+'</div>';
 }
 
 /* ===================== MODAL ROUTER ===================== */
@@ -3491,8 +3919,11 @@ function invoiceModalHTML(m){
 
   var b = getBooking(m.bookingId);
   if(!state.invoiceDraft || state.invoiceDraft.bookingId!==b.id){
+    // kind/catalogId (2026-09-28): tags added purely for the new Reports
+    // feature's "top products & services" report — doesn't change how
+    // itemId itself is used elsewhere (minutesForItem() etc., untouched).
     var presetLines = (b.serviceItems||[]).map(function(it){
-      return {desc: it.desc || it.name, qty:1, unitPrice: it.price||0, itemId: it.id};
+      return {desc: it.desc || it.name, qty:1, unitPrice: it.price||0, itemId: it.id, kind:'service', catalogId: it.id};
     });
     // Photos the technician already attached on the booking itself (the
     // Photos section on the booking form) start the invoice's photo set —
@@ -3936,6 +4367,11 @@ function handleAction(el){
   if(a==='set-schedule-mode'){ state.scheduleMode = el.dataset.mode; render(); return; }
   if(a==='set-staff-filter'){ state.staffFilter = el.dataset.staff; render(); return; }
   if(a==='set-jobs-filter'){ state.jobsStatusFilter = el.dataset.status; render(); return; }
+  if(a==='set-reports-range'){ state.reportsRange = el.dataset.range; render(); return; }
+  if(a==='set-reports-type'){ state.reportsType = el.dataset.type; render(); return; }
+  if(a==='set-reports-salesgroup'){ state.reportsSalesGroupBy = el.dataset.group; render(); return; }
+  if(a==='set-reports-salesscope'){ state.reportsSalesScope = el.dataset.scope; render(); return; }
+  if(a==='set-reports-timegroup'){ state.reportsTimeGroupBy = el.dataset.group; render(); return; }
   if(a==='set-status'){
     var b = getBooking(el.dataset.id);
     if(b){
@@ -4163,7 +4599,7 @@ function handleAction(el){
   if(a==='pick-service'){
     var svc = getService(el.dataset.id);
     if(svc && state.invoiceDraft){
-      state.invoiceDraft.extraLines.push({desc: svc.salesDescription || svc.name, qty:1, unitPrice: svc.salesUnitPrice||0, itemId: svc.id});
+      state.invoiceDraft.extraLines.push({desc: svc.salesDescription || svc.name, qty:1, unitPrice: svc.salesUnitPrice||0, itemId: svc.id, kind:'service', catalogId: svc.id});
       toast('Added: '+svc.name);
     }
     openModal({type:'invoice', id:null, bookingId: state.invoiceDraft ? state.invoiceDraft.bookingId : null});
@@ -4182,7 +4618,7 @@ function handleAction(el){
   if(a==='pick-product'){
     var prod = getProduct(el.dataset.id);
     if(prod && state.invoiceDraft){
-      state.invoiceDraft.extraLines.push({desc: prod.salesDescription || prod.name, qty:1, unitPrice: prod.salesUnitPrice||0});
+      state.invoiceDraft.extraLines.push({desc: prod.salesDescription || prod.name, qty:1, unitPrice: prod.salesUnitPrice||0, kind:'product', catalogId: prod.id});
       toast('Added: '+prod.name);
     }
     openModal({type:'invoice', id:null, bookingId: state.invoiceDraft ? state.invoiceDraft.bookingId : null});
@@ -4262,13 +4698,21 @@ async function finalizeInvoice(bookingId, send){
   // line items array that actually gets saved (and, once sent, pushed to
   // Xero), so this is the real fix; the draft-screen change just keeps the
   // preview honest about what's about to be saved.
+  // kind/catalogId/qty/unitPrice (2026-09-28): purely additive fields, for
+  // the new Reports feature's "sales over time" and "top products &
+  // services" reports to group revenue accurately instead of parsing desc
+  // text. Nothing existing reads these — invoice display and the Xero push
+  // still only use desc/amount, untouched. An invoice sent before this date
+  // won't have them; the report code falls back to inferring kind from desc
+  // for those (see reportLineKind() below), so old data still shows up, just
+  // less precisely bucketed.
   var lineItems = unlinkedMins
-    ? [{desc:'Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)', amount:laborAmt}]
+    ? [{desc:'Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)', amount:laborAmt, kind:'labour', qty: unlinkedMins/60, unitPrice: b.rate}]
     : [];
   extra.forEach(function(l){
     var linkedMins = l.itemId ? minutesForItem(bookingId, l.itemId) : 0;
     var desc = l.desc+' ('+l.qty+' × '+fmtMoney(l.unitPrice)+(linkedMins?' · '+fmtHrsMin(linkedMins)+' logged':'')+')';
-    lineItems.push({desc:desc, amount:l.qty*l.unitPrice});
+    lineItems.push({desc:desc, amount:l.qty*l.unitPrice, kind: l.kind||null, catalogId: l.catalogId||null, qty:l.qty, unitPrice:l.unitPrice});
   });
   var subtotal = lineItems.reduce(function(a,l){return a+l.amount;},0);
   var gst = subtotal*0.1;
@@ -4661,6 +5105,8 @@ function handleChange(el){
     }
     return;
   }
+  if(el.dataset.change==='reports-custom-from'){ state.reportsCustomFrom = el.value || null; render(); return; }
+  if(el.dataset.change==='reports-custom-to'){ state.reportsCustomTo = el.value || null; render(); return; }
   if(el.dataset.change==='invoice-photo-input'){
     filePickerOpen = false;
     var files = Array.prototype.slice.call(el.files||[]);

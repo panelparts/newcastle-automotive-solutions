@@ -126,7 +126,14 @@
     text-wrap:balance;
   }
   button{font-family:inherit;}
-  input,select,textarea{font-family:inherit;font-size:14px;color:var(--ink);}
+  /* 16px minimum, not a style choice: iOS Safari auto-zooms the whole page
+     the instant a text input/select/textarea with a computed font-size under
+     16px receives focus — and because this app rebuilds the DOM wholesale on
+     every render() (see backgroundRender()), Safari's own "zoom back out on
+     blur" heuristic gets confused by the element it zoomed into being torn
+     down and rebuilt mid-zoom, so the zoom sticks instead of releasing. 16px
+     is the documented threshold that stops the zoom from triggering at all. */
+  input,select,textarea{font-family:inherit;font-size:16px;color:var(--ink);}
   a{color:inherit;}
   ::selection{background:var(--accent-soft);}
   .mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums;}
@@ -159,7 +166,7 @@
   .me-label{font-size:11px;color:rgba(255,255,255,.55);text-transform:uppercase;letter-spacing:.06em;display:none;}
   .me-select{
     appearance:none;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);
-    border-radius:999px;padding:6px 30px 6px 12px;font-size:13px;font-weight:600;color:#fff;
+    border-radius:999px;padding:6px 30px 6px 12px;font-size:16px;font-weight:600;color:#fff;
     background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><path d='M5 8l5 5 5-5' fill='none' stroke='%23ffffff' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
     background-repeat:no-repeat;background-position:right 9px center;background-size:13px;
     max-width:150px;

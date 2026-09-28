@@ -1502,6 +1502,7 @@ var state = {
   modal: null,
   confirmDelete: null,
   confirmVoid: null,
+  confirmBillTime: null,
   timer: null,
   xeroInfoOpen: false,
   xeroStatus: null,
@@ -1622,6 +1623,19 @@ function unlinkedTotalMinutesFor(bookingId){
 function unlinkedAllBillable(bookingId){
   var entries = unlinkedEntriesFor(bookingId);
   return entries.length ? entries.every(function(t){ return t.billable!==false; }) : true;
+}
+// Sets every unlinked time entry on a booking to the same billable state in
+// one go — shared by the combined Billed/Not billed switch
+// (unlinkedBillToggleHTML()/toggle-all-billable) and the new "bill the
+// recorded time?" popup (confirmBillTimeModalHTML()/bill-time-yes/-no), so
+// both end up writing exactly the same way. Skips entries already at the
+// target value instead of rewriting everything unconditionally.
+function setUnlinkedBillable(bookingId, makeBillable){
+  unlinkedEntriesFor(bookingId).forEach(function(t){
+    if((t.billable!==false) !== makeBillable){
+      saveDoc('timeEntries', Object.assign({}, t, {billable: makeBillable}));
+    }
+  });
 }
 function bookingItemLabel(b, itemId){
   if(!itemId || !b || !b.serviceItems) return null;
@@ -2007,8 +2021,8 @@ function toast(msg){
 }
 
 /* ===================== modal open/close ===================== */
-function openModal(m){ state.modal = m; state.confirmDelete = null; state.confirmVoid = null; render(); }
-function closeModal(){ state.modal = null; state.confirmDelete = null; state.confirmVoid = null; state.invoiceDraft = null; state.customerDraft = null; state.bookingDraft = null; render(); }
+function openModal(m){ state.modal = m; state.confirmDelete = null; state.confirmVoid = null; state.confirmBillTime = null; render(); }
+function closeModal(){ state.modal = null; state.confirmDelete = null; state.confirmVoid = null; state.confirmBillTime = null; state.invoiceDraft = null; state.customerDraft = null; state.bookingDraft = null; render(); }
 
 /* ===================== nav config ===================== */
 var NAV_ITEMS = [
@@ -2096,8 +2110,26 @@ function render(){
   // top" the moment a background poll re-rendered while someone was
   // scrolled down filling it in. Save each scrollable container's
   // scrollTop before the rebuild and put it straight back after.
-  var prevMainScroll = document.getElementById('main-scroll');
-  var mainScrollTop = prevMainScroll ? prevMainScroll.scrollTop : 0;
+  //   2026-09-28, at the user's request ("the menu for the services is
+  // resetting and returning to the top after a few seconds"): #main-scroll
+  // and .modal-panel were the only two containers covered — but the actual
+  // "menu" the user meant is the Services/Products picker list
+  // (serviceCatalogModalHTML()/productCatalogModalHTML(), #service-results-
+  // list / #product-results-list) and the inline job-items picker on the
+  // booking form (#booking-service-results) — each of those has its OWN
+  // independent scroll (max-height + overflow:auto), nested inside the modal
+  // panel, not the modal panel's own scroll. Browsing down that list (the
+  // full 36-service catalog, say) then sitting for a few seconds landed a
+  // background poll's rebuild, which reset that inner list's scrollTop to 0
+  // same as #main-scroll used to — "a few seconds" matches the 4-second
+  // poll tick almost exactly. Generalized to a small list of ids so any
+  // current or future nested-scroll picker gets the same protection.
+  var SCROLL_PRESERVE_IDS = ['main-scroll','service-results-list','product-results-list','booking-service-results'];
+  var prevScrollTops = {};
+  SCROLL_PRESERVE_IDS.forEach(function(id){
+    var el = document.getElementById(id);
+    if(el) prevScrollTops[id] = el.scrollTop;
+  });
   var prevModalPanel = mroot.querySelector('.modal-panel');
   var modalScrollTop = prevModalPanel ? prevModalPanel.scrollTop : 0;
   app.innerHTML =
@@ -2108,12 +2140,22 @@ function render(){
     '</div>' +
     tabbarHTML() +
     topActionHTML();
-  mroot.innerHTML = (state.modal ? modalHTML() : '') + (state.confirmDelete ? confirmDeleteModalHTML() : '') + (state.confirmVoid ? confirmVoidModalHTML() : '');
+  // state.modal is rendered first, deliberately: modalHTML() (via
+  // invoiceModalHTML()) is what actually sets state.confirmBillTime as a
+  // side effect the first time an invoice draft is opened for a booking with
+  // unlinked time — evaluated left-to-right, so by the time the
+  // state.confirmBillTime check below runs, it's already up to date for this
+  // same render pass. Same established pattern this file already uses for
+  // state.invoiceDraft itself.
+  mroot.innerHTML = (state.modal ? modalHTML() : '') + (state.confirmDelete ? confirmDeleteModalHTML() : '') + (state.confirmVoid ? confirmVoidModalHTML() : '') + (state.confirmBillTime ? confirmBillTimeModalHTML() : '');
   wirePostRender();
   restoreFormFields(app, snapshot, focusKey, selStart, selEnd);
   restoreFormFields(mroot, snapshot, focusKey, selStart, selEnd);
-  var newMainScroll = document.getElementById('main-scroll');
-  if(newMainScroll) newMainScroll.scrollTop = mainScrollTop;
+  SCROLL_PRESERVE_IDS.forEach(function(id){
+    if(prevScrollTops[id]==null) return;
+    var el = document.getElementById(id);
+    if(el) el.scrollTop = prevScrollTops[id];
+  });
   var newModalPanel = mroot.querySelector('.modal-panel');
   if(newModalPanel) newModalPanel.scrollTop = modalScrollTop;
 }
@@ -2933,6 +2975,35 @@ function confirmVoidModalHTML(){
   '</div>';
 }
 
+/* ---- "bill the recorded time?" confirmation popup ----
+   2026-09-28, at the user's request ("with the linked timer on the invoice
+   can that be a pop up window when you open the invoice asking if the time
+   needs to be billed to the invoice"): the combined Billed/Not billed switch
+   (unlinkedBillToggleHTML(), still there, still works the same way) is easy
+   to miss on a small screen when there's a big service description sitting
+   right above it — this makes the same either/or decision impossible to
+   miss the moment the invoice is first opened, instead of relying on the
+   tech noticing a switch. Only appears when the booking actually has
+   unlinked time logged (see the trigger in invoiceModalHTML() below) and
+   only the first time this invoice draft is opened — answering it, or
+   dismissing it (tap outside / Escape, same as every other confirm popup),
+   never brings it back for the same draft; the inline switch is still there
+   afterward for changing your mind. */
+function confirmBillTimeModalHTML(){
+  var cb = state.confirmBillTime;
+  return '<div class="confirm-backdrop" id="confirm-backdrop">' +
+    '<div class="confirm-panel">' +
+      '<div class="confirm-icon">'+ICONS.clock+'</div>' +
+      '<h3>Bill the recorded time?</h3>' +
+      '<p>This job has <strong>'+fmtHrsMin(cb.mins)+'</strong> of time logged that isn\'t linked to a priced item. Add it to this invoice as billable labour?</p>' +
+      '<div class="confirm-actions">' +
+        '<button type="button" class="btn" data-action="bill-time-no" data-booking="'+cb.bookingId+'">No, don\'t bill it</button>' +
+        '<button type="button" class="btn btn-primary" data-action="bill-time-yes" data-booking="'+cb.bookingId+'">Yes, bill it</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
 /* ---- time field (plain native time input) ---- */
 function timeFieldHTML(name, label, value){
   return '<div class="field"><label>'+label+'</label>' +
@@ -3429,6 +3500,18 @@ function invoiceModalHTML(m){
     // the booking. Capped the same way addInvoicePhotos caps additions here.
     var presetPhotos = (b.photos||[]).slice(0, INVOICE_PHOTO_MAX);
     state.invoiceDraft = {bookingId:b.id, extraLines: presetLines, photos: presetPhotos, photoUploads: []};
+    // 2026-09-28, at the user's request: pop up and ask whether the job's
+    // unlinked time should be billed, the moment this draft is first opened
+    // — see confirmBillTimeModalHTML() for the full reasoning. Only set here,
+    // inside the "just created a fresh draft for this booking" branch, so it
+    // fires once per opening of the invoice, not on every re-render while
+    // it's already open (editing a qty, toggling a photo, etc. all re-run
+    // this function but skip this whole block since state.invoiceDraft
+    // already matches this booking by then).
+    var freshUnlinkedMins = unlinkedMinutesFor(b.id);
+    if(freshUnlinkedMins > 0){
+      state.confirmBillTime = {bookingId: b.id, mins: freshUnlinkedMins};
+    }
   }
   var unlinkedMins = unlinkedMinutesFor(b.id);
   var laborAmt = (unlinkedMins/60) * b.rate;
@@ -3933,14 +4016,11 @@ function handleAction(el){
     // toggle-billable action above with one combined switch per job — see
     // unlinkedBillToggleHTML(). Flips every unlinked entry to the opposite of
     // the job's current combined state in one go (self-healing any mixed
-    // state left over from testing the per-entry version).
+    // state left over from testing the per-entry version). Write logic lives
+    // in setUnlinkedBillable() now, shared with the bill-time-yes/-no popup
+    // buttons below.
     var bkIdToToggle = el.dataset.id;
-    var makeBillable = !unlinkedAllBillable(bkIdToToggle);
-    unlinkedEntriesFor(bkIdToToggle).forEach(function(t){
-      if((t.billable!==false) !== makeBillable){
-        saveDoc('timeEntries', Object.assign({}, t, {billable: makeBillable}));
-      }
-    });
+    setUnlinkedBillable(bkIdToToggle, !unlinkedAllBillable(bkIdToToggle));
     return;
   }
   if(a==='edit-staff'){ openModal({type:'staff', id:el.dataset.id}); return; }
@@ -3999,6 +4079,18 @@ function handleAction(el){
     render(); return;
   }
   if(a==='cancel-void'){ state.confirmVoid = null; render(); return; }
+  if(a==='bill-time-yes'){
+    setUnlinkedBillable(el.dataset.booking, true);
+    state.confirmBillTime = null;
+    render();
+    return;
+  }
+  if(a==='bill-time-no'){
+    setUnlinkedBillable(el.dataset.booking, false);
+    state.confirmBillTime = null;
+    render();
+    return;
+  }
   if(a==='confirm-void-invoice'){
     var voidId = el.dataset.id;
     var ivToVoid = state.invoices.find(function(x){return x.id===voidId;});
@@ -4723,7 +4815,7 @@ function wirePostRender(){
 
 /* ===================== global listeners (bound once) ===================== */
 document.addEventListener('click', function(e){
-  if(e.target && e.target.id==='confirm-backdrop'){ state.confirmDelete = null; state.confirmVoid = null; render(); return; }
+  if(e.target && e.target.id==='confirm-backdrop'){ state.confirmDelete = null; state.confirmVoid = null; state.confirmBillTime = null; render(); return; }
   // 2026-09-27, at the user's request ("if I click off the screen it
   // disappears and I lose all the info"): a tap that lands on the dark
   // area around a modal — easy to do by accident on a phone, especially
@@ -4754,6 +4846,7 @@ document.addEventListener('keydown', function(e){
   if(e.key!=='Escape') return;
   if(state.confirmDelete){ state.confirmDelete = null; render(); return; }
   if(state.confirmVoid){ state.confirmVoid = null; render(); return; }
+  if(state.confirmBillTime){ state.confirmBillTime = null; render(); return; }
   if(state.modal){ closeModal(); }
 });
 

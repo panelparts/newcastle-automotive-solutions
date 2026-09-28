@@ -3456,28 +3456,37 @@ function invoiceModalHTML(m){
   // when in the invoice screen"): a line added here (from the services/
   // products picker, or already on the booking as a job item) used to show
   // its qty and unit price as plain static text — the only way to change
-  // either was to remove the whole line and re-add it via the separate
-  // "custom line" form below, which loses the description/link back to the
-  // catalog item. Both are now small editable number inputs, wired via
-  // data-change (fires on blur/enter, not every keystroke, so it can't
-  // interrupt typing with a mid-edit re-render — same reasoning as the
-  // qty/price fields already used by the "Add extra item" form just below).
+  // either was to remove the whole line and re-add it. Both are now small
+  // editable number inputs, wired via data-change (fires on blur/enter, not
+  // every keystroke, so it can't interrupt typing with a mid-edit re-render).
   // Deliberately no inline font-size on these — the base input/select/
-  // textarea rule was just bumped to 16px this session specifically to stop
-  // iOS Safari's zoom-and-stick bug, and a smaller override here would
+  // textarea rule was bumped to 16px earlier this session specifically to
+  // stop iOS Safari's zoom-and-stick bug, and a smaller override here would
   // silently reintroduce it on these two fields alone.
+  //   Same day, follow-up ("EWWWW W" + a screenshot — the first version put
+  // the qty/price boxes in a new row below the whole (often multi-paragraph,
+  // e.g. a calibration line's full description) desc text, far from the
+  // dollar amount they controlled, while a separate static amount still sat
+  // up top where it always had — two disconnected places both about the same
+  // number reads as broken, not editable. Moved the qty/price inputs to
+  // replace that static amount directly, still anchored top-right next to
+  // desc (`align-items:flex-start` on the row so a long, wrapping desc can't
+  // push the amount column down), with the live computed total sitting right
+  // under them — one place for "the actual price," not two.
   var extraLines = state.invoiceDraft.extraLines.map(function(l,i){
     var amt = l.qty*l.unitPrice;
     var linkedMins = l.itemId ? minutesForItem(b.id, l.itemId) : 0;
-    return '<div class="line-item-row"><div class="li-desc">'+escapeHtml(l.desc)+
-      '<small style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:3px">' +
-        '<input type="number" data-change="edit-line-qty" data-idx="'+i+'" value="'+l.qty+'" min="0.5" step="0.5" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)">' +
-        ' × ' +
-        '<input type="number" data-change="edit-line-price" data-idx="'+i+'" value="'+l.unitPrice+'" min="0" step="0.01" style="width:78px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)">' +
-        (linkedMins?' · '+fmtHrsMin(linkedMins)+' logged':'') +
-      '</small></div>' +
-      '<div style="display:flex;align-items:center;gap:8px"><span class="li-amt">'+fmtMoney(amt)+'</span>' +
-      '<button type="button" class="icon-btn" style="width:24px;height:24px" data-action="remove-invoice-line" data-idx="'+i+'">'+ICONS.close+'</button></div></div>';
+    return '<div class="line-item-row" style="align-items:flex-start">' +
+      '<div class="li-desc">'+escapeHtml(l.desc)+(linkedMins?'<small style="display:block;margin-top:3px">'+fmtHrsMin(linkedMins)+' logged</small>':'')+'</div>' +
+      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:none">' +
+        '<div style="display:flex;align-items:center;gap:5px">' +
+          '<input type="number" data-change="edit-line-qty" data-idx="'+i+'" value="'+l.qty+'" min="0.5" step="0.5" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)">' +
+          '<span class="helptext">×</span>' +
+          '<input type="number" data-change="edit-line-price" data-idx="'+i+'" value="'+l.unitPrice+'" min="0" step="0.01" style="width:78px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)">' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px"><span class="li-amt">'+fmtMoney(amt)+'</span>' +
+        '<button type="button" class="icon-btn" style="width:24px;height:24px" data-action="remove-invoice-line" data-idx="'+i+'">'+ICONS.close+'</button></div>' +
+      '</div></div>';
   }).join('');
 
   var extraTotal = state.invoiceDraft.extraLines.reduce(function(a,l){return a+l.qty*l.unitPrice;},0);
@@ -3489,17 +3498,23 @@ function invoiceModalHTML(m){
       '<div class="row-between"><strong>'+escapeHtml(b.customer.name)+'</strong>'+(b.vehicle.rego?'<span class="mono helptext">'+escapeHtml(b.vehicle.rego)+'</span>':'')+'</div>' +
       '<div class="helptext" style="margin-top:2px">Job reference: <span class="mono">'+escapeHtml(b.reference||'—')+'</span></div>' +
       '<div style="margin-top:10px">'+billToggleRow+laborLine+extraLines+'</div>' +
+      // 2026-09-28, same round of feedback ("can we remove the extra items,
+      // QTY and Units box looks messy"): the "Or add a custom line" form
+      // (Extra item / Qty / Unit $ / Add) stacked into three full-width rows
+      // on a phone-width screen instead of the single tidy line it was meant
+      // to be — removed outright, along with its now-dead `data-form="invoice-line"`
+      // submit handler in handleFormSubmit(). Adding from the Services or
+      // Products list is still there and is now the only way to add a line —
+      // a real capability loss (no more truly freeform "Parts" line with a
+      // description that isn't in the catalog), a deliberate trade for a
+      // clean screen per the user's own explicit ask; worth adding a service/
+      // product catalog entry for anything that used to be a one-off custom
+      // line, or asking to bring a tidier single-row version of this back if
+      // that gap is ever actually felt in real use.
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">' +
         '<button type="button" class="btn btn-sm" data-action="open-service-picker">'+ICONS.plus+' Add from service list</button>' +
         '<button type="button" class="btn btn-sm" data-action="open-product-picker">'+ICONS.plus+' Add from products list</button>' +
       '</div>' +
-      '<div class="helptext" style="margin-top:6px">Or add a custom line:</div>' +
-      '<form data-form="invoice-line" style="display:flex;gap:7px;margin-top:4px;align-items:flex-end;flex-wrap:wrap">' +
-        '<div class="field" style="flex:2;min-width:120px"><label>Extra item</label><input type="text" name="desc" placeholder="e.g. Parts" required></div>' +
-        '<div class="field" style="width:60px"><label>Qty</label><input type="number" name="qty" value="1" min="0.5" step="0.5"></div>' +
-        '<div class="field" style="width:90px"><label>Unit $</label><input type="number" name="unitPrice" value="0" min="0" step="1"></div>' +
-        '<button type="submit" class="btn btn-sm">Add</button>' +
-      '</form>' +
       totalsHTML(subtotal, gst, total) +
     '</div>' +
     '<div class="card card-pad">' +
@@ -4493,15 +4508,6 @@ function handleFormSubmit(form){
     var vRego = fd.get('rego'), vMakeModel = fd.get('makeModel');
     if(!vRego || !state.customerDraft) return;
     state.customerDraft.vehicles.push({rego: vRego, makeModel: vMakeModel});
-    render();
-    return;
-  }
-  if(type==='invoice-line'){
-    var desc = fd.get('desc');
-    var qty = Number(fd.get('qty'))||1;
-    var unitPrice = Number(fd.get('unitPrice'))||0;
-    if(!state.invoiceDraft) return;
-    state.invoiceDraft.extraLines.push({desc:desc, qty:qty, unitPrice:unitPrice});
     render();
     return;
   }

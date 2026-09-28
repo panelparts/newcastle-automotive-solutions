@@ -3464,7 +3464,7 @@ function bookingModalHTML(m){
       '<div class="field"><label>Staff</label><select name="staffId" required>'+staffOptions+'</select></div>' +
     '</div>' +
     '<div class="field-row">' +
-      '<div class="field"><label>Reference #</label><input type="text" name="reference" class="mono" value="'+(b?escapeHtml(b.reference||''):'')+'" placeholder="e.g. '+nextJobRef()+'" required></div>' +
+      '<div class="field"><label>Reference #</label><input type="text" name="reference" class="mono" style="text-transform:uppercase" autocapitalize="characters" value="'+(b?escapeHtml(b.reference||''):'')+'" placeholder="e.g. '+nextJobRef()+'" required></div>' +
       '<div class="field"><label>Job type</label><select name="jobType">'+typeOpts+'</select></div>' +
     '</div>' +
     '<div class="field-row">' +
@@ -4923,7 +4923,7 @@ function handleFormSubmit(form){
   if(type==='booking'){
     var id = form.dataset.id || uid('b');
     var existing = form.dataset.id ? getBooking(form.dataset.id) : null;
-    var typedRef = (fd.get('reference')||'').trim();
+    var typedRef = (fd.get('reference')||'').trim().toUpperCase();
     if(!typedRef){ toast('Reference # is required'); return; }
     var typedName = fd.get('custName');
     var typedPhone = fd.get('custPhone');

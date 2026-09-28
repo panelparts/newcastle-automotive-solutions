@@ -3468,24 +3468,28 @@ function invoiceModalHTML(m){
   // e.g. a calibration line's full description) desc text, far from the
   // dollar amount they controlled, while a separate static amount still sat
   // up top where it always had — two disconnected places both about the same
-  // number reads as broken, not editable. Moved the qty/price inputs to
-  // replace that static amount directly, still anchored top-right next to
-  // desc (`align-items:flex-start` on the row so a long, wrapping desc can't
-  // push the amount column down), with the live computed total sitting right
-  // under them — one place for "the actual price," not two.
+  // number reads as broken, not editable.
+  //   Same day, one more round ("No I want the price change to be the red
+  // box not above it it should just have 1 x 485 and that should be
+  // adjustable" — the "red box" being their own screenshot annotation around
+  // the computed-total row): even stacked together, qty×price *and* a
+  // separately-computed "= $485.00" line was still two numbers doing the
+  // same job — the editable qty×price row already says the price, a second
+  // read-only total right under it added nothing. Collapsed to one row: just
+  // the qty and price inputs plus the remove button, no separate amount
+  // display per line. The invoice's own subtotal/GST/total (totalsHTML(),
+  // right below the line list) is still computed live off the same qty/price
+  // values via extraTotal's reduce() below, so the real total is always
+  // visible — just not repeated on every single line.
   var extraLines = state.invoiceDraft.extraLines.map(function(l,i){
-    var amt = l.qty*l.unitPrice;
     var linkedMins = l.itemId ? minutesForItem(b.id, l.itemId) : 0;
     return '<div class="line-item-row" style="align-items:flex-start">' +
       '<div class="li-desc">'+escapeHtml(l.desc)+(linkedMins?'<small style="display:block;margin-top:3px">'+fmtHrsMin(linkedMins)+' logged</small>':'')+'</div>' +
-      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:none">' +
-        '<div style="display:flex;align-items:center;gap:5px">' +
-          '<input type="number" data-change="edit-line-qty" data-idx="'+i+'" value="'+l.qty+'" min="0.5" step="0.5" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)">' +
-          '<span class="helptext">×</span>' +
-          '<input type="number" data-change="edit-line-price" data-idx="'+i+'" value="'+l.unitPrice+'" min="0" step="0.01" style="width:78px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)">' +
-        '</div>' +
-        '<div style="display:flex;align-items:center;gap:8px"><span class="li-amt">'+fmtMoney(amt)+'</span>' +
-        '<button type="button" class="icon-btn" style="width:24px;height:24px" data-action="remove-invoice-line" data-idx="'+i+'">'+ICONS.close+'</button></div>' +
+      '<div style="display:flex;align-items:center;gap:5px;flex:none">' +
+        '<input type="number" data-change="edit-line-qty" data-idx="'+i+'" value="'+l.qty+'" min="0.5" step="0.5" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)">' +
+        '<span class="helptext">×</span>' +
+        '<input type="number" data-change="edit-line-price" data-idx="'+i+'" value="'+l.unitPrice+'" min="0" step="0.01" style="width:78px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)">' +
+        '<button type="button" class="icon-btn" style="width:24px;height:24px" data-action="remove-invoice-line" data-idx="'+i+'">'+ICONS.close+'</button>' +
       '</div></div>';
   }).join('');
 

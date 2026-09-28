@@ -3452,10 +3452,30 @@ function invoiceModalHTML(m){
   // the booking screen would.
   var billToggleRow = unlinkedBillToggleHTML(b.id);
 
+  // 2026-09-28, at the user's request ("I can not change the product amount
+  // when in the invoice screen"): a line added here (from the services/
+  // products picker, or already on the booking as a job item) used to show
+  // its qty and unit price as plain static text — the only way to change
+  // either was to remove the whole line and re-add it via the separate
+  // "custom line" form below, which loses the description/link back to the
+  // catalog item. Both are now small editable number inputs, wired via
+  // data-change (fires on blur/enter, not every keystroke, so it can't
+  // interrupt typing with a mid-edit re-render — same reasoning as the
+  // qty/price fields already used by the "Add extra item" form just below).
+  // Deliberately no inline font-size on these — the base input/select/
+  // textarea rule was just bumped to 16px this session specifically to stop
+  // iOS Safari's zoom-and-stick bug, and a smaller override here would
+  // silently reintroduce it on these two fields alone.
   var extraLines = state.invoiceDraft.extraLines.map(function(l,i){
     var amt = l.qty*l.unitPrice;
     var linkedMins = l.itemId ? minutesForItem(b.id, l.itemId) : 0;
-    return '<div class="line-item-row"><div class="li-desc">'+escapeHtml(l.desc)+'<small>'+l.qty+' × '+fmtMoney(l.unitPrice)+(linkedMins?' · '+fmtHrsMin(linkedMins)+' logged':'')+'</small></div>' +
+    return '<div class="line-item-row"><div class="li-desc">'+escapeHtml(l.desc)+
+      '<small style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:3px">' +
+        '<input type="number" data-change="edit-line-qty" data-idx="'+i+'" value="'+l.qty+'" min="0.5" step="0.5" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)">' +
+        ' × ' +
+        '<input type="number" data-change="edit-line-price" data-idx="'+i+'" value="'+l.unitPrice+'" min="0" step="0.01" style="width:78px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)">' +
+        (linkedMins?' · '+fmtHrsMin(linkedMins)+' logged':'') +
+      '</small></div>' +
       '<div style="display:flex;align-items:center;gap:8px"><span class="li-amt">'+fmtMoney(amt)+'</span>' +
       '<button type="button" class="icon-btn" style="width:24px;height:24px" data-action="remove-invoice-line" data-idx="'+i+'">'+ICONS.close+'</button></div></div>';
   }).join('');
@@ -4515,6 +4535,29 @@ function handleChange(el){
     state.meId = el.value || null;
     safeSet('bb_meId', state.meId || '');
     render();
+  }
+  // 2026-09-28: lets a line already added to the invoice draft (from the
+  // service/product picker, or a job item carried over from the booking)
+  // have its qty or unit price changed in place — see the comment above
+  // extraLines' HTML in invoiceModalHTML() for the full "why" and why
+  // there's deliberately no font-size override on these inputs.
+  if(el.dataset.change==='edit-line-qty'){
+    var qi = Number(el.dataset.idx);
+    var qLine = state.invoiceDraft && state.invoiceDraft.extraLines[qi];
+    if(qLine){
+      qLine.qty = Math.max(0, Number(el.value)||0);
+      render();
+    }
+    return;
+  }
+  if(el.dataset.change==='edit-line-price'){
+    var pi = Number(el.dataset.idx);
+    var pLine = state.invoiceDraft && state.invoiceDraft.extraLines[pi];
+    if(pLine){
+      pLine.unitPrice = Math.max(0, Number(el.value)||0);
+      render();
+    }
+    return;
   }
   if(el.dataset.change==='invoice-photo-input'){
     filePickerOpen = false;

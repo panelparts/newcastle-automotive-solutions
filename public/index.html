@@ -427,6 +427,12 @@
   .li-desc{color:var(--ink);white-space:pre-line;}
   .li-desc small{display:block;color:var(--ink-faint);font-size:11.5px;margin-top:1px;}
   .li-amt{font-family:var(--font-mono);font-weight:600;flex:none;}
+  /* 2026-09-29: small column captions above the qty/price/description
+     inputs on the Build-invoice screen, borrowed from Xero's own invoice
+     editor's column headers (Qty/Price/Description) — kept as per-field
+     micro-labels rather than a literal table header row, since our lines
+     stack vertically on a phone instead of sitting in fixed columns. */
+  .li-col-label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-faint);margin-bottom:2px;}
   .totals-block{margin-top:8px;padding-top:8px;}
   .totals-row{display:flex;justify-content:space-between;font-size:13px;color:var(--ink-soft);padding:3px 0;}
   .totals-row.grand{font-size:16px;font-weight:700;color:var(--ink);padding-top:7px;}
@@ -4021,7 +4027,12 @@ function invoiceModalHTML(m){
     // copied, not shared, so removing one here doesn't touch what's saved on
     // the booking. Capped the same way addInvoicePhotos caps additions here.
     var presetPhotos = (b.photos||[]).slice(0, INVOICE_PHOTO_MAX);
-    state.invoiceDraft = {bookingId:b.id, extraLines: presetLines, photos: presetPhotos, photoUploads: []};
+    // laborDesc (2026-09-29, at the user's request: "the repair labour
+    // service need to be able to have a changeable description"): null
+    // means "still using the auto-generated wording" (job type + hours +
+    // rate) — set to the tech's own text the moment they edit the field
+    // below, and used as-is (not regenerated) from then on for this draft.
+    state.invoiceDraft = {bookingId:b.id, extraLines: presetLines, photos: presetPhotos, photoUploads: [], laborDesc: null};
     // 2026-09-28, at the user's request: pop up and ask whether the job's
     // unlinked time should be billed, the moment this draft is first opened
     // — see confirmBillTimeModalHTML() for the full reasoning. Only set here,
@@ -4046,8 +4057,24 @@ function invoiceModalHTML(m){
   // switch is off, or there's simply no unlinked time logged at all) —
   // exactly mirrors finalizeInvoice()'s own lineItems construction below, so
   // what gets shown here on the draft screen matches what's actually saved.
+  // 2026-09-29, at the user's request ("the repair labour service need to
+  // be able to have a changeable description"): this line's wording used
+  // to be fixed, auto-generated text with no way to change it — e.g. to
+  // write "Repair labour — brake job" instead of the generic "Labour —
+  // Mechanical (1h 30m @ $120.00/hr)". Now a real text input, defaulting to
+  // that same auto-generated wording (so nothing changes for anyone who
+  // doesn't touch it) but editable — see laborDesc above and the
+  // edit-labor-desc handler in handleChange().
+  var autoLaborDesc = 'Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)';
+  var laborDescValue = (state.invoiceDraft.laborDesc!=null) ? state.invoiceDraft.laborDesc : autoLaborDesc;
   var laborLine = unlinkedMins
-    ? '<div class="line-item-row"><div class="li-desc">Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)</div><div class="li-amt">'+fmtMoney(laborAmt)+'</div></div>'
+    ? '<div class="line-item-row" style="align-items:flex-start">' +
+        '<div style="flex:1;min-width:0">' +
+          '<span class="li-col-label">Description</span>' +
+          '<input type="text" data-change="edit-labor-desc" value="'+escapeHtml(laborDescValue)+'" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink);font-size:13.5px">' +
+        '</div>' +
+        '<div class="li-amt" style="padding-top:18px">'+fmtMoney(laborAmt)+'</div>' +
+      '</div>'
     : '';
   // 2026-09-27, at the user's request ("this option also needs to be on the
   // invoice screen"): same combined Billed/Not billed switch as the
@@ -4090,11 +4117,14 @@ function invoiceModalHTML(m){
     var linkedMins = l.itemId ? minutesForItem(b.id, l.itemId) : 0;
     return '<div class="line-item-row" style="align-items:flex-start">' +
       '<div class="li-desc">'+escapeHtml(l.desc)+(linkedMins?'<small style="display:block;margin-top:3px">'+fmtHrsMin(linkedMins)+' logged</small>':'')+'</div>' +
-      '<div style="display:flex;align-items:center;gap:5px;flex:none">' +
-        '<input type="number" data-change="edit-line-qty" data-idx="'+i+'" value="'+l.qty+'" min="0.5" step="0.5" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)">' +
-        '<span class="helptext">×</span>' +
-        '<input type="number" data-change="edit-line-price" data-idx="'+i+'" value="'+l.unitPrice+'" min="0" step="0.01" style="width:78px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)">' +
-        '<button type="button" class="icon-btn" style="width:24px;height:24px" data-action="remove-invoice-line" data-idx="'+i+'">'+ICONS.close+'</button>' +
+      '<div style="display:flex;align-items:flex-end;gap:5px;flex:none">' +
+        // 2026-09-29: "Qty"/"Price" micro-labels above these two inputs,
+        // borrowed from Xero's own column headers (see .li-col-label above)
+        // — previously just a bare "×" between two unlabelled boxes.
+        '<div><span class="li-col-label">Qty</span><input type="number" data-change="edit-line-qty" data-idx="'+i+'" value="'+l.qty+'" min="0.5" step="0.5" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)"></div>' +
+        '<span class="helptext" style="padding-bottom:5px">×</span>' +
+        '<div><span class="li-col-label">Price</span><input type="number" data-change="edit-line-price" data-idx="'+i+'" value="'+l.unitPrice+'" min="0" step="0.01" style="width:78px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)"></div>' +
+        '<button type="button" class="icon-btn" style="width:24px;height:24px;margin-bottom:1px" data-action="remove-invoice-line" data-idx="'+i+'">'+ICONS.close+'</button>' +
       '</div></div>';
   }).join('');
 
@@ -4140,11 +4170,32 @@ function invoiceModalHTML(m){
 
   return modalShell('Build invoice', body, foot);
 }
+// 2026-09-29, at the user's request ("Can we make the invoice screen look
+// more like this" — a Xero invoice editor screenshot: "Amounts are: Tax
+// inclusive" near the top, then Subtotal / an indented "Includes GST" sub-
+// line / a divider / bold Total): borrowed the polish while staying
+// mobile-friendly (their own choice when asked — see the AskUserQuestion
+// this was gated on) rather than Xero's literal wide desktop table.
+//   Deliberately did NOT copy Xero's exact "Subtotal repeats Total, GST
+// shown as a sub-note nested under it" arrangement, even though that's
+// what the screenshot shows: in Xero's version Subtotal and Total are the
+// same GST-inclusive figure (nothing else on the invoice adjusts it), so
+// showing GST "under" Subtotal there is just "here's what's inside this
+// number." This app's Subtotal has always meant the ex-GST amount instead
+// (matches the Reports screen's "Revenue (ex GST)" stat and BAS-style
+// record-keeping) — nesting "Includes GST" under a SMALLER, different
+// Subtotal number would misleadingly read as "this GST is part of the
+// figure above," which it isn't. So Subtotal/GST/Total stay three
+// genuinely distinct, clearly-labelled peer rows (unchanged from before);
+// what's new is the explicit "Amounts are GST inclusive" note up top (this
+// app has no exclusive/inclusive toggle — it's always inclusive now, see
+// gstBreakdown()) and Xero's divider-before-bold-total treatment.
 function totalsHTML(subtotal, gst, total){
   return '<div class="totals-block">' +
-    '<div class="totals-row"><span>Subtotal</span><span class="mono">'+fmtMoney(subtotal)+'</span></div>' +
-    '<div class="totals-row"><span>GST (10%)</span><span class="mono">'+fmtMoney(gst)+'</span></div>' +
-    '<div class="totals-row grand"><span>Total</span><span class="mono">'+fmtMoney(total)+'</span></div>' +
+    '<div class="helptext" style="margin-bottom:6px">Amounts are GST inclusive</div>' +
+    '<div class="totals-row"><span>Subtotal (ex GST)</span><span class="mono">'+fmtMoney(subtotal)+'</span></div>' +
+    '<div class="totals-row"><span>GST</span><span class="mono">'+fmtMoney(gst)+'</span></div>' +
+    '<div class="totals-row grand" style="border-top:1px solid var(--border-soft);margin-top:4px;padding-top:9px"><span>Total</span><span class="mono">'+fmtMoney(total)+'</span></div>' +
   '</div>';
 }
 
@@ -4796,8 +4847,18 @@ async function finalizeInvoice(bookingId, send){
   // won't have them; the report code falls back to inferring kind from desc
   // for those (see reportLineKind() below), so old data still shows up, just
   // less precisely bucketed.
+  // 2026-09-29, at the user's request ("the repair labour service need to
+  // be able to have a changeable description"): uses whatever the tech
+  // actually left in the description field on the draft screen — falls
+  // back to the same auto-generated wording as before if they never
+  // touched it (state.invoiceDraft.laborDesc is still null) or cleared it
+  // to blank (a blank line item description isn't useful on a real
+  // invoice/in Xero).
+  var autoLaborDesc = 'Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)';
+  var laborDescFinal = (state.invoiceDraft && state.invoiceDraft.laborDesc!=null && state.invoiceDraft.laborDesc.trim())
+    ? state.invoiceDraft.laborDesc.trim() : autoLaborDesc;
   var lineItems = unlinkedMins
-    ? [{desc:'Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)', amount:laborAmt, kind:'labour', qty: unlinkedMins/60, unitPrice: b.rate}]
+    ? [{desc:laborDescFinal, amount:laborAmt, kind:'labour', qty: unlinkedMins/60, unitPrice: b.rate}]
     : [];
   extra.forEach(function(l){
     var linkedMins = l.itemId ? minutesForItem(bookingId, l.itemId) : 0;
@@ -5207,6 +5268,14 @@ function handleChange(el){
       pLine.unitPrice = Math.max(0, Number(el.value)||0);
       render();
     }
+    return;
+  }
+  if(el.dataset.change==='edit-labor-desc'){
+    // 2026-09-29, at the user's request ("the repair labour service need to
+    // be able to have a changeable description"): stores the tech's own
+    // wording so it's used as-is going forward (see the laborDesc comment
+    // at its init above) instead of always regenerating the auto text.
+    if(state.invoiceDraft){ state.invoiceDraft.laborDesc = el.value; render(); }
     return;
   }
   if(el.dataset.change==='reports-custom-from'){ state.reportsCustomFrom = el.value || null; render(); return; }

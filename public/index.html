@@ -3984,10 +3984,22 @@ function bumpBookingEndTime(deltaMins){
    the "only booked in available times" half of the request), turns into a
    clear conflict message the moment the entered start/end actually overlaps
    one of those jobs, and handleFormSubmit's 'booking' branch refuses to save
-   while that conflict exists (see findBookingConflict() call there). */
+   while that conflict exists (see findBookingConflict() call there).
+
+   2026-09-29, at the user's request ("Exclude invoiced job from stopping
+   other bookings, if a job is completed in advance then it should not stop
+   further booking"): a 'completed' or 'invoiced' job is done — it no longer
+   represents real reserved time on that tech's day, so it shouldn't count
+   as "already booked" at all here. Concretely, this is what lets a tech who
+   finishes a 9-11am job early and marks it complete at 9:45 get a new job
+   booked into the rest of that slot without the diary treating the old
+   (now-finished) job as still occupying it. 'booked'/'in_progress'/
+   'on_hold' still block, exactly as before — those genuinely still hold
+   the tech's time. */
 function otherBookingsForStaffDate(staffId, date, excludeId){
   return state.bookings.filter(function(b){
-    return b.staffId===staffId && b.date===date && b.id!==excludeId;
+    return b.staffId===staffId && b.date===date && b.id!==excludeId &&
+      b.status!=='completed' && b.status!=='invoiced';
   }).sort(function(a,b){ return a.start.localeCompare(b.start); });
 }
 function timesOverlap(aStart, aEnd, bStart, bEnd){

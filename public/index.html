@@ -3974,8 +3974,22 @@ function customerModalHTML(m){
 
 /* ---- invoice modal ---- */
 function invoiceModalHTML(m){
+  // 2026-09-29, at the user's request ("I have a booking that has gone into
+  // Draft as i was not finished with it now im not able to edit the
+  // invoice"): opening a saved invoice by id used to ALWAYS show the
+  // read-only summary below, no matter its status — fine for a sent/paid/
+  // void invoice (Xero already has it, editing here wouldn't do anything),
+  // but a 'draft' invoice is one that was deliberately saved unfinished
+  // ("Save as draft") specifically so it could be picked back up later —
+  // and this view gave it nowhere to go except "Send to Xero" as-is or
+  // void it. Now a draft falls through into the same editable builder used
+  // to create a fresh invoice, pre-filled from what was already saved, so
+  // it behaves like a real "resume this draft" rather than a dead end.
+  var editingInvoice = null;
   if(m.id){
-    var iv = state.invoices.find(function(x){return x.id===m.id;});
+    editingInvoice = state.invoices.find(function(x){return x.id===m.id;});
+    if(!editingInvoice || editingInvoice.status!=='draft'){
+    var iv = editingInvoice;
     var lines = iv.lineItems.map(function(li){
       return '<div class="line-item-row"><div class="li-desc">'+escapeHtml(li.desc)+'</div><div class="li-amt">'+fmtMoney(li.amount)+'</div></div>';
     }).join('');
@@ -4012,10 +4026,61 @@ function invoiceModalHTML(m){
       ? '<button type="button" class="btn btn-primary btn-block" data-action="send-existing-invoice" data-id="'+iv.id+'" data-booking="'+iv.bookingId+'">Send to Xero</button>'
       : '';
     return modalShell('Invoice', body, voidBtn + sendBtn + '<button type="button" class="btn'+(sendBtn?'':' btn-block')+'" data-action="close-modal">Close</button>');
+    }
+    // editingInvoice.status === 'draft' — fall through to the editable
+    // builder below instead of returning the read-only view.
   }
 
-  var b = getBooking(m.bookingId);
+  var b = getBooking(m.bookingId || (editingInvoice && editingInvoice.bookingId));
   if(!state.invoiceDraft || state.invoiceDraft.bookingId!==b.id){
+    if(editingInvoice){
+      // Resuming a saved draft: rebuild extraLines from what was actually
+      // saved rather than re-deriving fresh presets from the booking (which
+      // would silently drop any qty/price/description edits, or added/
+      // removed lines, the tech already made before saving as a draft).
+      // baseDesc (added below, in finalizeInvoice's extra.forEach) is the
+      // short, un-suffixed description this editable screen expects — the
+      // desc actually saved onto the invoice line has "(qty × price)" baked
+      // on for the read-only view/Xero, so using it as-is here would double
+      // that suffix up the next time this draft is saved. Older draft
+      // invoices saved before baseDesc existed fall back to the raw desc
+      // (best effort — only affects drafts saved before this fix).
+      // isLaborLine: kind==='labour' identifies it directly for anything
+      // saved since 2026-09-28 (when that field was added). A handful of
+      // drafts saved just before that (2026-09-27) have no kind at all on
+      // any line, so fall back to recognizing the auto-generated labour
+      // wording by its fixed "Labour — " prefix — without this, an old
+      // draft like that would double up: its saved labour amount would sit
+      // as an "extra line" AND the live labour line (recomputed from
+      // current time entries) would be added on top of it.
+      var isLaborLine = function(li){ return li.kind==='labour' || (li.kind==null && /^Labour\s/.test(li.desc||'')); };
+      var presetLines = editingInvoice.lineItems.filter(function(li){ return !isLaborLine(li); }).map(function(li){
+        return {
+          desc: (li.baseDesc!=null) ? li.baseDesc : li.desc,
+          qty: (li.qty!=null) ? li.qty : 1,
+          unitPrice: (li.unitPrice!=null) ? li.unitPrice : li.amount,
+          itemId: li.itemId || null,
+          kind: li.kind || null,
+          catalogId: li.catalogId || null
+        };
+      });
+      var presetPhotos = (editingInvoice.photos||[]).slice(0, INVOICE_PHOTO_MAX);
+      var savedLabor = editingInvoice.lineItems.find(isLaborLine);
+      state.invoiceDraft = {
+        bookingId: b.id, extraLines: presetLines, photos: presetPhotos, photoUploads: [],
+        laborDesc: savedLabor ? savedLabor.desc : null,
+        // Saving over the SAME invoice id/createdAt (rather than minting a
+        // new one) is what makes this a real edit instead of leaving a
+        // duplicate draft behind — see finalizeInvoice().
+        editingInvoiceId: editingInvoice.id, editingCreatedAt: editingInvoice.createdAt
+      };
+      // No "bill the unlinked time?" prompt here (contrast the fresh-draft
+      // branch below) — that's a first-time decision for a job that was just
+      // completed; re-opening an already-saved draft isn't that moment
+      // again, and the Billed/Not billed toggle itself reads live off the
+      // time entries either way, so nothing is lost by skipping it.
+      return invoiceModalHTML(m);
+    }
     // kind/catalogId (2026-09-28): tags added purely for the new Reports
     // feature's "top products & services" report — doesn't change how
     // itemId itself is used elsewhere (minutesForItem() etc., untouched).
@@ -4863,7 +4928,11 @@ async function finalizeInvoice(bookingId, send){
   extra.forEach(function(l){
     var linkedMins = l.itemId ? minutesForItem(bookingId, l.itemId) : 0;
     var desc = l.desc+' ('+l.qty+' × '+fmtMoney(l.unitPrice)+(linkedMins?' · '+fmtHrsMin(linkedMins)+' logged':'')+')';
-    lineItems.push({desc:desc, amount:l.qty*l.unitPrice, kind: l.kind||null, catalogId: l.catalogId||null, qty:l.qty, unitPrice:l.unitPrice});
+    // baseDesc/itemId (2026-09-29): kept alongside the suffixed display desc
+    // specifically so a saved draft can be re-opened and edited later (see
+    // invoiceModalHTML()'s editingInvoice branch) without that suffix
+    // compounding onto itself on the next save.
+    lineItems.push({desc:desc, baseDesc: l.desc, amount:l.qty*l.unitPrice, kind: l.kind||null, catalogId: l.catalogId||null, itemId: l.itemId||null, qty:l.qty, unitPrice:l.unitPrice});
   });
   // 2026-09-29, at the user's request ("All prices on products and services
   // are gst inclusive please change this", extended to labour too): every
@@ -4873,11 +4942,18 @@ async function finalizeInvoice(bookingId, send){
   var finalTotals = gstBreakdown(lineItems.reduce(function(a,l){return a+l.amount;},0));
   var subtotal = finalTotals.subtotal, gst = finalTotals.gst, total = finalTotals.total;
   var photos = state.invoiceDraft ? state.invoiceDraft.photos : [];
+  // 2026-09-29 fix: re-saving a draft that was opened via the "resume this
+  // draft" path (invoiceModalHTML()'s editingInvoice branch) reuses that
+  // SAME invoice id and its original createdAt — a plain upsert-by-id on the
+  // backend — instead of minting a fresh uid('inv') every time, which used
+  // to leave a duplicate draft behind (and the original untouched) every
+  // time a draft was edited and saved again.
+  var editingId = state.invoiceDraft && state.invoiceDraft.editingInvoiceId;
   var invoice = {
-    id: uid('inv'), bookingId: bookingId, customerName: b.customer.name, reference: b.reference||'',
+    id: editingId || uid('inv'), bookingId: bookingId, customerName: b.customer.name, reference: b.reference||'',
     lineItems: lineItems, subtotal: subtotal, gst: gst, total: total,
     photos: photos, photosPending: false,
-    status: 'draft', createdAt: Date.now(), sentAt: null,
+    status: 'draft', createdAt: (editingId && state.invoiceDraft.editingCreatedAt) || Date.now(), sentAt: null,
     xeroInvoiceId: null, xeroInvoiceNumber: null, xeroInvoiceUrl: null
   };
 

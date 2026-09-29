@@ -356,6 +356,8 @@
   .job-meta .staff-tag{display:flex;align-items:center;gap:5px;}
   .job-meta .sw{width:8px;height:8px;border-radius:50%;flex:none;}
   .job-addr{font-size:12px;color:var(--ink-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .job-notes{font-size:12px;color:var(--ink-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:5px;margin-top:3px;}
+  .job-notes svg{width:12px;height:12px;flex:none;color:var(--ink-faint);}
 
   /* ---------- schedule time-grid (2026-09-29, drag-and-drop) ---------- */
   .sched-wrap{display:flex;gap:0;align-items:flex-start;}
@@ -394,6 +396,7 @@
   .sched-block .sb-time{font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .sched-block .sb-cust{font-weight:700;font-size:12px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .sched-block .sb-meta{font-size:10.5px;color:var(--ink-faint);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sched-block .sb-notes{font-size:10.5px;color:var(--ink-soft);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .sched-block .sb-pill{position:absolute;top:3px;right:3px;transform:scale(.76);transform-origin:top right;}
   .sched-block.sched-dragging{cursor:grabbing;box-shadow:var(--shadow-2);opacity:.97;z-index:999;}
 
@@ -2624,6 +2627,17 @@ function schedBlockHTML(b, startH, hourPx, col, totalCols){
     inner = '<div class="sb-time">'+fmtTime12(b.start)+' – '+fmtTime12(b.end)+'</div>' +
             '<div class="sb-cust">'+escapeHtml(b.customer.name)+'</div>' +
             '<div class="sb-meta">'+escapeHtml(staffName(b.staffId).split(' ')[0])+(b.reference?' · '+escapeHtml(b.reference):'')+'</div>' +
+            // 2026-09-29, at the user's request ("On the booking can I have
+            // a description of the jobs so we know what they are without
+            // opening them"): the booking form's own "Notes" field (b.notes)
+            // is exactly that job description, but until now it was only
+            // ever visible after tapping into the booking. Large-enough
+            // blocks get one extra, single-line preview of it here — the
+            // block's fixed height + overflow:hidden below means a really
+            // short job or an unusually long note just clips rather than
+            // breaking the layout, so this is a plain best-effort addition,
+            // nothing to validate.
+            (b.notes?'<div class="sb-notes">'+escapeHtml(b.notes)+'</div>':'') +
             '<span class="pill pill-'+b.status+' sb-pill">'+STATUS_LABEL[b.status]+'</span>';
   }
   return '<div class="sched-block sched-block-'+size+'" data-action="open-booking" data-id="'+b.id+'" data-sched-drag data-booking-id="'+b.id+'" ' +
@@ -2880,6 +2894,11 @@ function jobsResultsHTML(){
           '<span class="badge-type">'+JOB_TYPE_LABEL[b.jobType]+'</span>' +
           (b.vehicle.rego?'<span class="mono">'+escapeHtml(b.vehicle.rego)+'</span>':'') +
         '</div>' +
+        // 2026-09-29, at the user's request ("On the booking can I have a
+        // description of the jobs so we know what they are without opening
+        // them") — same job-description preview as the schedule grid's
+        // blocks (see schedBlockHTML), here for the Jobs tab's own list.
+        (b.notes?'<div class="job-notes">'+ICONS.clipboard+' '+escapeHtml(b.notes)+'</div>':'') +
       '</div>' +
     '</div>';
   }).join('') + '</div>';

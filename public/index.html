@@ -2818,6 +2818,15 @@ function invoicingView(){
   return '' +
     xero +
     '<div><div class="section-head"><div class="section-title">Ready to invoice</div><div class="section-sub">'+ready.length+' job'+(ready.length===1?'':'s')+'</div></div><div style="margin-top:8px">'+readySection+'</div></div>' +
+    // 2026-09-29, at the user's request ("can I also have the option to
+    // just create a invoice without a booking, just straight invoice
+    // build"): not every invoice starts from a scheduled job — a walk-in
+    // parts sale, or a job that was never booked through the calendar,
+    // still needs to be invoiced. Reuses the exact same 'build-invoice'
+    // action every "Create invoice" button already uses — just without a
+    // data-booking attribute, which is what invoiceModalHTML() uses to
+    // decide this is a standalone invoice (see isStandaloneInvoice there).
+    '<div><button type="button" class="btn btn-block" data-action="build-invoice">'+ICONS.plus+' New invoice (no booking)</button></div>' +
     '<div><div class="section-head"><div class="section-title">Invoice history</div><div class="section-sub">'+sent.length+'</div></div><div style="margin-top:8px">'+sentSection+'</div></div>';
 }
 
@@ -3199,8 +3208,14 @@ function reportJobTypeMix(range){
 function reportTopCustomers(invoices){
   var byCust = {};
   invoices.forEach(function(iv){
+    // iv.customerId (2026-09-29): a standalone invoice (no booking — see
+    // "New invoice (no booking)") has no booking to resolve a customer
+    // through, but carries its own customerId directly when the typed
+    // customer name matched or was saved as a real contact — prefer that,
+    // falling back to the booking-based lookup for any invoice (old or
+    // booking-linked) that doesn't have it set.
     var b = getBooking(iv.bookingId);
-    var custId = b ? b.customerId : null;
+    var custId = iv.customerId || (b ? b.customerId : null);
     var cust = custId ? getCustomer(custId) : null;
     var key = custId || ('name:'+iv.customerName);
     if(!byCust[key]) byCust[key] = { customerId:custId, name: cust ? cust.name : (iv.customerName||'Unknown'), revenue:0, count:0 };
@@ -3972,6 +3987,34 @@ function customerModalHTML(m){
   return modalShell(editing?'Edit customer':'Add customer', form+vehicleBlock+jobsBlock+deleteBlock, foot);
 }
 
+// 2026-09-29: pulled out of invoiceModalHTML() as a standalone function
+// (previously an inline .map() there) so it can be reused by
+// standaloneInvoiceModalHTML() below too — identical markup/behaviour
+// either way, just parameterised on which booking (if any) linkedMins
+// should be looked up against. Passing bookingId=null (a standalone
+// invoice never has one) simply always shows 0 linked minutes, same as it
+// already did for any line whose itemId was empty.
+function extraLinesHTML(lines, bookingId){
+  return lines.map(function(l,i){
+    var linkedMins = (l.itemId && bookingId) ? minutesForItem(bookingId, l.itemId) : 0;
+    return '<div class="line-item-row" style="align-items:flex-start;flex-direction:column;gap:6px">' +
+      '<div style="width:100%">' +
+        '<span class="li-col-label">Description</span>' +
+        '<input type="text" data-change="edit-line-desc" data-idx="'+i+'" value="'+escapeHtml(l.desc)+'" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink);font-size:16px">' +
+        (linkedMins?'<small class="helptext" style="display:block;margin-top:3px">'+fmtHrsMin(linkedMins)+' logged</small>':'') +
+      '</div>' +
+      '<div style="display:flex;align-items:flex-end;gap:5px;align-self:flex-end">' +
+        // 2026-09-29: "Qty"/"Price" micro-labels above these two inputs,
+        // borrowed from Xero's own column headers (see .li-col-label above)
+        // — previously just a bare "×" between two unlabelled boxes.
+        '<div><span class="li-col-label">Qty</span><input type="number" data-change="edit-line-qty" data-idx="'+i+'" value="'+l.qty+'" min="0.5" step="0.5" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)"></div>' +
+        '<span class="helptext" style="padding-bottom:5px">×</span>' +
+        '<div><span class="li-col-label">Price</span><input type="number" data-change="edit-line-price" data-idx="'+i+'" value="'+l.unitPrice+'" min="0" step="0.01" style="width:78px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)"></div>' +
+        '<button type="button" class="icon-btn" style="width:24px;height:24px;margin-bottom:1px" data-action="remove-invoice-line" data-idx="'+i+'">'+ICONS.close+'</button>' +
+      '</div></div>';
+  }).join('');
+}
+
 /* ---- invoice modal ---- */
 function invoiceModalHTML(m){
   // 2026-09-29, at the user's request ("I have a booking that has gone into
@@ -4030,6 +4073,20 @@ function invoiceModalHTML(m){
     // editingInvoice.status === 'draft' — fall through to the editable
     // builder below instead of returning the read-only view.
   }
+
+  // 2026-09-29, at the user's request ("Can I also have the option to just
+  // create a invoice without a booking, just straight invoice build"): an
+  // invoice no longer has to come from a completed job. m.bookingId is
+  // falsy both for a brand-new "+ New invoice (no booking)" open (see the
+  // new button in invoicingView()) and for resuming a saved draft that was
+  // itself built standalone (editingInvoice.bookingId is '' in that case)
+  // — either way there's no booking to pull a customer/vehicle/rate/time-
+  // tracking from, so the whole screen forks into standaloneInvoiceModalHTML()
+  // below rather than dereferencing a booking that doesn't exist. Everything
+  // from here down in this function is unchanged and still assumes a real
+  // booking, same as before this feature existed.
+  var isStandaloneInvoice = editingInvoice ? !editingInvoice.bookingId : !m.bookingId;
+  if(isStandaloneInvoice) return standaloneInvoiceModalHTML(m, editingInvoice);
 
   var b = getBooking(m.bookingId || (editingInvoice && editingInvoice.bookingId));
   if(!state.invoiceDraft || state.invoiceDraft.bookingId!==b.id){
@@ -4199,24 +4256,7 @@ function invoiceModalHTML(m){
   // far from the price it controls (see the comment block above): here it's
   // the same stacked description-then-qty/price-then-remove layout as the
   // line right above it, not a return to the old two-column desc/price split.
-  var extraLines = state.invoiceDraft.extraLines.map(function(l,i){
-    var linkedMins = l.itemId ? minutesForItem(b.id, l.itemId) : 0;
-    return '<div class="line-item-row" style="align-items:flex-start;flex-direction:column;gap:6px">' +
-      '<div style="width:100%">' +
-        '<span class="li-col-label">Description</span>' +
-        '<input type="text" data-change="edit-line-desc" data-idx="'+i+'" value="'+escapeHtml(l.desc)+'" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink);font-size:16px">' +
-        (linkedMins?'<small class="helptext" style="display:block;margin-top:3px">'+fmtHrsMin(linkedMins)+' logged</small>':'') +
-      '</div>' +
-      '<div style="display:flex;align-items:flex-end;gap:5px;align-self:flex-end">' +
-        // 2026-09-29: "Qty"/"Price" micro-labels above these two inputs,
-        // borrowed from Xero's own column headers (see .li-col-label above)
-        // — previously just a bare "×" between two unlabelled boxes.
-        '<div><span class="li-col-label">Qty</span><input type="number" data-change="edit-line-qty" data-idx="'+i+'" value="'+l.qty+'" min="0.5" step="0.5" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)"></div>' +
-        '<span class="helptext" style="padding-bottom:5px">×</span>' +
-        '<div><span class="li-col-label">Price</span><input type="number" data-change="edit-line-price" data-idx="'+i+'" value="'+l.unitPrice+'" min="0" step="0.01" style="width:78px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink)"></div>' +
-        '<button type="button" class="icon-btn" style="width:24px;height:24px;margin-bottom:1px" data-action="remove-invoice-line" data-idx="'+i+'">'+ICONS.close+'</button>' +
-      '</div></div>';
-  }).join('');
+  var extraLines = extraLinesHTML(state.invoiceDraft.extraLines, b.id);
 
   var extraTotal = state.invoiceDraft.extraLines.reduce(function(a,l){return a+l.qty*l.unitPrice;},0);
   var draftTotals = gstBreakdown(laborAmt + extraTotal);
@@ -4257,6 +4297,129 @@ function invoiceModalHTML(m){
 
   var foot = '<button type="button" class="btn" data-action="save-invoice-draft" data-booking="'+b.id+'">Save as draft</button>' +
     '<button type="button" class="btn btn-primary btn-block" data-action="send-to-xero" data-booking="'+b.id+'">Send to Xero</button>';
+
+  return modalShell('Build invoice', body, foot);
+}
+/**
+ * 2026-09-29, at the user's request ("Can I also have the option to just
+ * create a invoice without a booking, just straight invoice build"): the
+ * same "Build invoice" screen as invoiceModalHTML() above, minus everything
+ * that only makes sense for a scheduled job — no vehicle, no hourly-rate
+ * labour line, no time tracking/Billed toggle, no job-item presets. Instead
+ * captures a Customer name (reusing the exact same tap-to-pick-an-existing-
+ * customer field, id and all, as the booking form's own Customer name field
+ * — findCustomerByName()/custNameSuggestHTML()/the wirePostRender() wiring
+ * for #cust-name-input are all already generic, so this gets that whole
+ * autocomplete-or-add-new-contact experience for free just by reusing the
+ * same element ids) and an optional free-text Reference, then the same
+ * Services/Products line-item builder, Photos, and Save as draft/Send to
+ * Xero buttons as a normal invoice.
+ *
+ * Called from invoiceModalHTML() the moment it determines there's no real
+ * booking behind this invoice (isStandaloneInvoice there) — for either a
+ * brand-new invoice (m.bookingId falsy, m.id null) or resuming a
+ * previously-saved standalone draft (editingInvoice.bookingId is '').
+ *
+ * state.invoiceDraft's re-init guard here is its own thing, not the
+ * `bookingId!==b.id` check the booking-based screen uses (there's no real
+ * booking id to compare against) — it only reinitializes when genuinely
+ * switching to a DIFFERENT saved draft (m.id set and different from the
+ * currently-loaded editingInvoiceId); reopening this same screen mid-
+ * session (e.g. from the "Add from service list" picker, which reopens via
+ * openModal({type:'invoice', id:null, bookingId:null}) same as it always
+ * has) always has m.id===null, so it correctly leaves an in-progress
+ * standalone session alone rather than wiping it.
+ */
+function standaloneInvoiceModalHTML(m, editingInvoice){
+  var wantEditingId = editingInvoice ? editingInvoice.id : null;
+  var alreadyInitialized = state.invoiceDraft && state.invoiceDraft.standalone &&
+    (!m.id || state.invoiceDraft.editingInvoiceId === wantEditingId);
+  if(!alreadyInitialized){
+    if(editingInvoice){
+      // Same reconstruction as invoiceModalHTML()'s own resume-a-draft
+      // branch (baseDesc/isLaborLine reasoning identical — see the comments
+      // there) — duplicated rather than shared because the two branches
+      // diverge immediately after this (one keeps a bookingId/laborDesc
+      // prefill, this one keeps a customer name/reference prefill instead).
+      var isLaborLine = function(li){ return li.kind==='labour' || (li.kind==null && /^Labour\s/.test(li.desc||'')); };
+      var presetLines = editingInvoice.lineItems.filter(function(li){ return !isLaborLine(li); }).map(function(li){
+        return {
+          desc: (li.baseDesc!=null) ? li.baseDesc : li.desc,
+          qty: (li.qty!=null) ? li.qty : 1,
+          unitPrice: (li.unitPrice!=null) ? li.unitPrice : li.amount,
+          itemId: li.itemId || null,
+          kind: li.kind || null,
+          catalogId: li.catalogId || null
+        };
+      });
+      state.invoiceDraft = {
+        standalone: true, bookingId: null, extraLines: presetLines,
+        photos: (editingInvoice.photos||[]).slice(0, INVOICE_PHOTO_MAX), photoUploads: [], laborDesc: null,
+        initialCustomerName: editingInvoice.customerName || '', initialReference: editingInvoice.reference || '',
+        editingInvoiceId: editingInvoice.id, editingCreatedAt: editingInvoice.createdAt
+      };
+    } else {
+      state.invoiceDraft = {
+        standalone: true, bookingId: null, extraLines: [], photos: [], photoUploads: [], laborDesc: null,
+        initialCustomerName: '', initialReference: ''
+      };
+    }
+  }
+
+  var extraLines = extraLinesHTML(state.invoiceDraft.extraLines, null);
+  var extraTotal = state.invoiceDraft.extraLines.reduce(function(a,l){return a+l.qty*l.unitPrice;},0);
+  var draftTotals = gstBreakdown(extraTotal);
+  var subtotal = draftTotals.subtotal, gst = draftTotals.gst, total = draftTotals.total;
+
+  // Same "matches an existing contact" hint/checkbox pair as the booking
+  // form's Customer name field. Prefers the ORIGINAL saved invoice's own
+  // customerId (looked up via state.invoiceDraft.editingInvoiceId, which —
+  // unlike the editingInvoice parameter above — survives every reopen of
+  // this screen mid-session, e.g. from the service/product picker, not
+  // just the very first render) over re-matching by the currently-typed
+  // name, the same way the booking form itself prefers a stored customerId
+  // over a live name match. Falls back to a live name match for a brand
+  // new invoice, which has no saved customerId yet.
+  var initialEditingCust = null;
+  if(state.invoiceDraft.editingInvoiceId){
+    var origStandaloneInv = state.invoices.find(function(x){ return x.id===state.invoiceDraft.editingInvoiceId; });
+    initialEditingCust = origStandaloneInv ? getCustomer(origStandaloneInv.customerId) : null;
+  }
+  var initialMatchedCust = initialEditingCust || findCustomerByName(state.invoiceDraft.initialCustomerName);
+
+  var body = '<div class="card card-pad">' +
+      '<div class="section-sub">Customer</div>' +
+      '<div class="field-row" style="margin-top:6px">' +
+        '<div class="field cust-suggest-wrap"><label>Customer name</label><input type="text" id="cust-name-input" name="custName" value="'+escapeHtml(state.invoiceDraft.initialCustomerName)+'" autocomplete="off" required>' +
+          '<div class="cust-suggest" id="cust-name-suggest" style="display:none"></div>' +
+        '</div>' +
+        '<div class="field"><label>Reference (optional)</label><input type="text" id="standalone-inv-reference" name="standaloneReference" class="mono" style="text-transform:uppercase" autocapitalize="characters" value="'+escapeHtml(state.invoiceDraft.initialReference)+'"></div>' +
+      '</div>' +
+      '<div style="min-height:26px">' +
+        '<div class="helptext" id="cust-match-hint" style="'+(initialMatchedCust?'':'visibility:hidden')+'">Matches an existing contact — their saved details will fill in.</div>' +
+        '<label class="check-row" id="save-contact-row" style="'+(initialMatchedCust?'visibility:hidden':'')+'"><input type="checkbox" name="saveContact" checked> Save as a customer contact for next time</label>' +
+      '</div>' +
+      '<div style="margin-top:10px">'+extraLines+'</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">' +
+        '<button type="button" class="btn btn-sm" data-action="open-service-picker">'+ICONS.plus+' Add from service list</button>' +
+        '<button type="button" class="btn btn-sm" data-action="open-product-picker">'+ICONS.plus+' Add from products list</button>' +
+      '</div>' +
+      (state.invoiceDraft.extraLines.length ? totalsHTML(subtotal, gst, total) : '<div class="helptext" style="margin-top:10px">Add a line from the service or product list to get started.</div>') +
+    '</div>' +
+    '<div class="card card-pad">' +
+      '<div class="section-sub">Photos</div>' +
+      '<div class="photo-grid" id="invoice-photos-block" style="margin-top:8px">'+invoicePhotosHTML(state.invoiceDraft.photos, true, 'draft')+'</div>' +
+    '</div>' +
+    '<div class="helptext">'+((state.xeroStatus && state.xeroStatus.connected) ?
+      'Sending creates a real draft invoice in Xero — there\'s no booking here for this to mark as invoiced.' :
+      'Sending records the invoice here. Xero isn\'t connected yet, so nothing is pushed there automatically — see the Account screen to connect it.') +
+    '</div>';
+
+  // No data-booking attribute on either button — that's exactly what tells
+  // finalizeInvoice() (via handleAction's existing 'save-invoice-draft'/
+  // 'send-to-xero' case, unchanged) this is a standalone invoice.
+  var foot = '<button type="button" class="btn" data-action="save-invoice-draft">Save as draft</button>' +
+    '<button type="button" class="btn btn-primary btn-block" data-action="send-to-xero">Send to Xero</button>';
 
   return modalShell('Build invoice', body, foot);
 }
@@ -4919,9 +5082,16 @@ async function finalizeInvoice(bookingId, send){
   if(state.invoiceDraft && state.invoiceDraft.photoUploads && state.invoiceDraft.photoUploads.length){
     try{ await Promise.all(state.invoiceDraft.photoUploads); }catch(e){}
   }
-  var b = getBooking(bookingId);
-  var unlinkedMins = unlinkedMinutesFor(bookingId);
-  var laborAmt = (unlinkedMins/60)*b.rate;
+  // 2026-09-29, at the user's request ("Can I also have the option to just
+  // create a invoice without a booking, just straight invoice build"): a
+  // falsy bookingId (undefined — the standalone screen's Save/Send buttons
+  // deliberately carry no data-booking attribute at all, see
+  // standaloneInvoiceModalHTML()) means there's no booking behind this
+  // invoice, so nothing below can assume one exists.
+  var isStandalone = !bookingId;
+  var b = isStandalone ? null : getBooking(bookingId);
+  var unlinkedMins = isStandalone ? 0 : unlinkedMinutesFor(bookingId);
+  var laborAmt = isStandalone ? 0 : (unlinkedMins/60)*b.rate;
   var extra = state.invoiceDraft ? state.invoiceDraft.extraLines : [];
   // 2026-09-27, at the user's request ("Can the labour mechanical line only
   // show on the invoice if the time recorded billed button is active") — see
@@ -4944,14 +5114,21 @@ async function finalizeInvoice(bookingId, send){
   // touched it (state.invoiceDraft.laborDesc is still null) or cleared it
   // to blank (a blank line item description isn't useful on a real
   // invoice/in Xero).
-  var autoLaborDesc = 'Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)';
-  var laborDescFinal = (state.invoiceDraft && state.invoiceDraft.laborDesc!=null && state.invoiceDraft.laborDesc.trim())
-    ? state.invoiceDraft.laborDesc.trim() : autoLaborDesc;
-  var lineItems = unlinkedMins
-    ? [{desc:laborDescFinal, amount:laborAmt, kind:'labour', qty: unlinkedMins/60, unitPrice: b.rate}]
-    : [];
+  var lineItems = [];
+  if(!isStandalone){
+    var autoLaborDesc = 'Labour — '+JOB_TYPE_LABEL[b.jobType]+' ('+fmtHrsMin(unlinkedMins)+' @ '+fmtMoney(b.rate)+'/hr)';
+    var laborDescFinal = (state.invoiceDraft && state.invoiceDraft.laborDesc!=null && state.invoiceDraft.laborDesc.trim())
+      ? state.invoiceDraft.laborDesc.trim() : autoLaborDesc;
+    // A standalone invoice never gets an auto Labour line at all — there's
+    // no booking rate/job type/time tracking to generate one from. Billing
+    // for labour on one of these just means adding a labour-priced service
+    // (e.g. a catalog "Repair Labour" item) from the picker like any other
+    // line, same as the double-booking/GST/description work above already
+    // made fully editable.
+    if(unlinkedMins) lineItems.push({desc:laborDescFinal, amount:laborAmt, kind:'labour', qty: unlinkedMins/60, unitPrice: b.rate});
+  }
   extra.forEach(function(l){
-    var linkedMins = l.itemId ? minutesForItem(bookingId, l.itemId) : 0;
+    var linkedMins = (l.itemId && !isStandalone) ? minutesForItem(bookingId, l.itemId) : 0;
     var desc = l.desc+' ('+l.qty+' × '+fmtMoney(l.unitPrice)+(linkedMins?' · '+fmtHrsMin(linkedMins)+' logged':'')+')';
     // baseDesc/itemId (2026-09-29): kept alongside the suffixed display desc
     // specifically so a saved draft can be re-opened and edited later (see
@@ -4959,6 +5136,39 @@ async function finalizeInvoice(bookingId, send){
     // compounding onto itself on the next save.
     lineItems.push({desc:desc, baseDesc: l.desc, amount:l.qty*l.unitPrice, kind: l.kind||null, catalogId: l.catalogId||null, itemId: l.itemId||null, qty:l.qty, unitPrice:l.unitPrice});
   });
+  // 2026-09-29, at the user's request ("can I also have the option to just
+  // create an invoice without a booking"): resolve the customer straight
+  // from the Customer name field on the standalone screen — same match-an-
+  // existing-contact-or-optionally-save-a-new-one logic the booking form's
+  // own submit handler already uses (handleFormSubmit's 'booking' branch),
+  // just run here instead since there's no booking form submission for a
+  // standalone invoice to piggyback on.
+  var customerName, customerId, reference;
+  if(isStandalone){
+    var custNameEl = document.getElementById('cust-name-input');
+    var refEl = document.getElementById('standalone-inv-reference');
+    var saveContactEl = document.querySelector('#save-contact-row input[name=saveContact]');
+    var typedCustName = (custNameEl ? custNameEl.value : '').trim();
+    if(!typedCustName){ toast('Customer name is required'); return; }
+    reference = (refEl ? refEl.value : '').trim().toUpperCase();
+    var matchedCust = findCustomerByName(typedCustName);
+    if(matchedCust){
+      customerId = matchedCust.id;
+      customerName = matchedCust.name;
+    } else if(saveContactEl && saveContactEl.checked){
+      var newCust = {id: uid('c'), name: typedCustName, phone:'', email:'', address:'', notes:'', vehicles:[], createdAt: Date.now()};
+      saveDoc('customers', newCust);
+      customerId = newCust.id;
+      customerName = typedCustName;
+    } else {
+      customerId = null;
+      customerName = typedCustName;
+    }
+  } else {
+    customerName = b.customer.name;
+    customerId = b.customerId || null;
+    reference = b.reference || '';
+  }
   // 2026-09-29, at the user's request ("All prices on products and services
   // are gst inclusive please change this", extended to labour too): every
   // line's amount above is already the final, GST-inclusive charge — see
@@ -4975,7 +5185,13 @@ async function finalizeInvoice(bookingId, send){
   // time a draft was edited and saved again.
   var editingId = state.invoiceDraft && state.invoiceDraft.editingInvoiceId;
   var invoice = {
-    id: editingId || uid('inv'), bookingId: bookingId, customerName: b.customer.name, reference: b.reference||'',
+    // customerId (2026-09-29): threaded through generally now (both a
+    // booking-linked invoice, via b.customerId, and a standalone one, via
+    // the match/create logic above) so the photo-to-customer-email feature
+    // can resolve a customer's email directly off the invoice itself
+    // instead of only ever through a booking — see emailPhotosToCustomer()
+    // in src/worker.js.
+    id: editingId || uid('inv'), bookingId: bookingId || '', customerId: customerId || null, customerName: customerName, reference: reference,
     lineItems: lineItems, subtotal: subtotal, gst: gst, total: total,
     photos: photos, photosPending: false,
     status: 'draft', createdAt: (editingId && state.invoiceDraft.editingCreatedAt) || Date.now(), sentAt: null,

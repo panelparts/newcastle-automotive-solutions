@@ -617,6 +617,21 @@ async function sendInvoiceToXero(id, env) {
     'UPDATE invoices SET status = ?, sent_at = ?, xero_invoice_id = ?, xero_invoice_number = ?, xero_invoice_url = ? WHERE id = ?'
   ).bind('sent', now, xeroBody.invoiceId, xeroBody.invoiceNumber, xeroBody.invoiceUrl, id).run();
 
+  // 2026-09-29 fix: flip the booking to 'invoiced' right here, atomically
+  // with the invoice being marked 'sent'. Previously this only happened on
+  // the frontend (an un-awaited saveDoc() call in sendInvoiceIdToXero()),
+  // which could silently fall back to a local-only update or race the
+  // background poll — leaving the invoice showing "Sent" in Xero while the
+  // booking stayed stuck on "Completed" forever. Doing it server-side, in
+  // the same request that we know reached Xero successfully, makes this
+  // guaranteed rather than best-effort. Harmless no-op if there's no
+  // bookingId (shouldn't happen) or the booking's already invoiced.
+  if (doc.bookingId) {
+    await env.DB.prepare("UPDATE bookings SET status = 'invoiced' WHERE id = ?")
+      .bind(doc.bookingId)
+      .run();
+  }
+
   // Attach any photos synchronously too — straight from R2, no chunking or
   // URL tricks needed since this Worker is talking to the Xero connector
   // directly.

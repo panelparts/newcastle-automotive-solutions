@@ -4777,7 +4777,7 @@ function totalsHTML(subtotal, gst, total){
 }
 
 /* ---- invoice photos ---- */
-var INVOICE_PHOTO_MAX = 6;
+var INVOICE_PHOTO_MAX = 10; // raised from 6 to 10, 2026-09-29, at the user's request ("Can we change the image limit from 6 to 10") — shared by both invoice photos and booking photos (see the note above addBookingPhotos below), so this one change covers both.
 function invoicePhotosHTML(photos, editable, scope, invId){
   photos = photos || [];
   var thumbs = photos.map(function(p,i){

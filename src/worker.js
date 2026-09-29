@@ -440,14 +440,14 @@ const COLLECTIONS = {
   invoices: {
     table: 'invoices',
     toRow: (d) => ({
-      id: d.id, booking_id: d.bookingId || '', customer_name: d.customerName || '', reference: d.reference || '',
+      id: d.id, booking_id: d.bookingId || '', customer_id: d.customerId || null, customer_name: d.customerName || '', reference: d.reference || '',
       line_items_json: JSON.stringify(d.lineItems || []), subtotal: Number(d.subtotal) || 0, gst: Number(d.gst) || 0,
       total: Number(d.total) || 0, photos_json: JSON.stringify(d.photos || []), photos_pending: d.photosPending ? 1 : 0,
       status: d.status || 'draft', created_at: d.createdAt || Date.now(), sent_at: d.sentAt || null,
       xero_invoice_id: d.xeroInvoiceId || null, xero_invoice_number: d.xeroInvoiceNumber || null, xero_invoice_url: d.xeroInvoiceUrl || null,
     }),
     toDoc: (r) => ({
-      id: r.id, bookingId: r.booking_id, customerName: r.customer_name, reference: r.reference,
+      id: r.id, bookingId: r.booking_id, customerId: r.customer_id, customerName: r.customer_name, reference: r.reference,
       lineItems: JSON.parse(r.line_items_json || '[]'), subtotal: r.subtotal, gst: r.gst, total: r.total,
       photos: JSON.parse(r.photos_json || '[]'), photosPending: !!r.photos_pending, status: r.status,
       createdAt: r.created_at, sentAt: r.sent_at, xeroInvoiceId: r.xero_invoice_id, xeroInvoiceNumber: r.xero_invoice_number, xeroInvoiceUrl: r.xero_invoice_url,
@@ -781,16 +781,28 @@ async function emailPhotosToCustomer(env, invoiceDoc) {
   if (!invoiceDoc.photos || !invoiceDoc.photos.length) {
     return { sent: false, reason: 'no_photos' };
   }
-  if (!invoiceDoc.bookingId) {
-    return { sent: false, reason: 'no_booking_linked' };
-  }
-  const booking = await env.DB.prepare('SELECT customer_id FROM bookings WHERE id = ?')
-    .bind(invoiceDoc.bookingId).first();
-  if (!booking || !booking.customer_id) {
-    return { sent: false, reason: 'no_customer_linked' };
+  // 2026-09-29, at the user's request ("can I also have the option to just
+  // create an invoice without a booking"): a standalone invoice has no
+  // bookingId to chain through to a customer, but DOES carry its own
+  // customerId directly (set at invoice-build time when the typed customer
+  // name matched, or was saved as, a real customer record) — try that
+  // first. Falls back to the original booking->customer_id chain for any
+  // booking-linked invoice, old or new, that doesn't have customerId set
+  // (every invoice saved before this date).
+  let customerId = invoiceDoc.customerId || null;
+  if (!customerId) {
+    if (!invoiceDoc.bookingId) {
+      return { sent: false, reason: 'no_booking_linked' };
+    }
+    const booking = await env.DB.prepare('SELECT customer_id FROM bookings WHERE id = ?')
+      .bind(invoiceDoc.bookingId).first();
+    if (!booking || !booking.customer_id) {
+      return { sent: false, reason: 'no_customer_linked' };
+    }
+    customerId = booking.customer_id;
   }
   const customer = await env.DB.prepare('SELECT email FROM customers WHERE id = ?')
-    .bind(booking.customer_id).first();
+    .bind(customerId).first();
   if (!customer || !customer.email) {
     return { sent: false, reason: 'no_email_on_file' };
   }

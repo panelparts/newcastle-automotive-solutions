@@ -4136,7 +4136,12 @@ function invoiceModalHTML(m){
     ? '<div class="line-item-row" style="align-items:flex-start">' +
         '<div style="flex:1;min-width:0">' +
           '<span class="li-col-label">Description</span>' +
-          '<input type="text" data-change="edit-labor-desc" value="'+escapeHtml(laborDescValue)+'" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink);font-size:13.5px">' +
+          // font-size:16px (2026-09-29 follow-up fix, matching the new
+          // edit-line-desc input below): this was 13.5px, which silently
+          // reintroduces the iOS Safari zoom-and-stick bug the base 16px
+          // input rule exists specifically to prevent — same latent issue,
+          // just never actually noticed on this field yet.
+          '<input type="text" data-change="edit-labor-desc" value="'+escapeHtml(laborDescValue)+'" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink);font-size:16px">' +
         '</div>' +
         '<div class="li-amt" style="padding-top:18px">'+fmtMoney(laborAmt)+'</div>' +
       '</div>'
@@ -4178,11 +4183,31 @@ function invoiceModalHTML(m){
   // right below the line list) is still computed live off the same qty/price
   // values via extraTotal's reduce() below, so the real total is always
   // visible — just not repeated on every single line.
+  // 2026-09-29, follow-up: the user's original ask ("the repair labour
+  // service need to be able to have a changeable description") turned out
+  // to mean a "Repair Labour" SERVICE line added here from the catalog —
+  // not (only) the auto-generated unlinked-time Labour line above, which is
+  // the one that got the editable description field the first time around.
+  // Reported back as "the invoice layout has not changed and the Repair
+  // labour description is still not editable" once that first fix visibly
+  // didn't touch this line. Every extra line (service/product, whatever its
+  // desc) now gets the exact same "Description" label + full-width text
+  // input treatment the labour line already has, right above its Qty/Price
+  // row — deliberately the SAME pattern already on screen and unremarked-on
+  // for the labour line, not a new one, so it can't repeat the earlier
+  // "EWWWW" complaint about the description sitting in a disconnected box
+  // far from the price it controls (see the comment block above): here it's
+  // the same stacked description-then-qty/price-then-remove layout as the
+  // line right above it, not a return to the old two-column desc/price split.
   var extraLines = state.invoiceDraft.extraLines.map(function(l,i){
     var linkedMins = l.itemId ? minutesForItem(b.id, l.itemId) : 0;
-    return '<div class="line-item-row" style="align-items:flex-start">' +
-      '<div class="li-desc">'+escapeHtml(l.desc)+(linkedMins?'<small style="display:block;margin-top:3px">'+fmtHrsMin(linkedMins)+' logged</small>':'')+'</div>' +
-      '<div style="display:flex;align-items:flex-end;gap:5px;flex:none">' +
+    return '<div class="line-item-row" style="align-items:flex-start;flex-direction:column;gap:6px">' +
+      '<div style="width:100%">' +
+        '<span class="li-col-label">Description</span>' +
+        '<input type="text" data-change="edit-line-desc" data-idx="'+i+'" value="'+escapeHtml(l.desc)+'" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink);font-size:16px">' +
+        (linkedMins?'<small class="helptext" style="display:block;margin-top:3px">'+fmtHrsMin(linkedMins)+' logged</small>':'') +
+      '</div>' +
+      '<div style="display:flex;align-items:flex-end;gap:5px;align-self:flex-end">' +
         // 2026-09-29: "Qty"/"Price" micro-labels above these two inputs,
         // borrowed from Xero's own column headers (see .li-col-label above)
         // — previously just a bare "×" between two unlabelled boxes.
@@ -5342,6 +5367,22 @@ function handleChange(el){
     var pLine = state.invoiceDraft && state.invoiceDraft.extraLines[pi];
     if(pLine){
       pLine.unitPrice = Math.max(0, Number(el.value)||0);
+      render();
+    }
+    return;
+  }
+  // 2026-09-29 follow-up, at the user's request ("the repair labour
+  // description is still not editable" — referring to a "Repair Labour"
+  // SERVICE line added from the catalog, not the auto-generated labour
+  // line above, which is what the first pass at this request had fixed):
+  // lets any extra line's own description be edited in place, same as its
+  // qty/price already could be, instead of only being changeable by
+  // removing the line and re-adding a differently-named one.
+  if(el.dataset.change==='edit-line-desc'){
+    var di = Number(el.dataset.idx);
+    var dLine = state.invoiceDraft && state.invoiceDraft.extraLines[di];
+    if(dLine){
+      dLine.desc = el.value;
       render();
     }
     return;

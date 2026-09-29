@@ -3448,10 +3448,18 @@ function bookingModalHTML(m){
     state.bookingDraft = {key: draftKey, serviceItems: (b && b.serviceItems) ? b.serviceItems.slice() : [], photos: (b && b.photos) ? b.photos.slice() : []};
   }
   var prefillDate = (m.prefill && m.prefill.date) || state.selectedDate;
-  var staffOptions = state.staff.filter(function(s){return s.active;}).map(function(s){
+  var activeStaffList = state.staff.filter(function(s){return s.active;});
+  var staffOptions = activeStaffList.map(function(s){
     var sel = b ? (b.staffId===s.id) : (m.prefill && m.prefill.staffId===s.id);
     return '<option value="'+s.id+'"'+(sel?' selected':'')+'>'+escapeHtml(s.name)+'</option>';
   }).join('');
+  // Whichever staff option actually ends up pre-selected in the <select>
+  // above (explicit match, or the browser's own default of "first option")
+  // — needed so the double-booking availability block below starts out
+  // showing the right staff member's diary, not nothing.
+  var initialStaffId = b ? b.staffId : ((m.prefill && m.prefill.staffId) || (activeStaffList[0] && activeStaffList[0].id) || '');
+  var initialStart = b ? b.start : '09:00';
+  var initialEnd = b ? b.end : '10:00';
 
   var typeOpts = ['mechanical','adas','both'].map(function(t){
     var sel = b ? b.jobType===t : t==='mechanical';
@@ -3468,9 +3476,10 @@ function bookingModalHTML(m){
       '<div class="field"><label>Job type</label><select name="jobType">'+typeOpts+'</select></div>' +
     '</div>' +
     '<div class="field-row">' +
-      timeFieldHTML('start', 'Start time', b?b.start:'09:00') +
-      timeFieldHTML('end', 'End time', b?b.end:'10:00') +
+      timeFieldHTML('start', 'Start time', initialStart) +
+      timeFieldHTML('end', 'End time', initialEnd) +
     '</div>' +
+    '<div id="booking-avail-block">'+bookingAvailHTML(initialStaffId, (b?b.date:prefillDate), (b?b.id:null), initialStart, initialEnd)+'</div>' +
     '<hr class="divider">' +
     '<div class="field-row">' +
       '<div class="field cust-suggest-wrap"><label>Customer name</label><input type="text" id="cust-name-input" name="custName" value="'+(b?escapeHtml(b.customer.name):'')+'" autocomplete="off" required>' +
@@ -3624,6 +3633,70 @@ function bumpBookingEndTime(deltaMins){
   var total = Number(parts[0])*60 + Number(parts[1]) + deltaMins;
   total = ((total % 1440) + 1440) % 1440;
   endInput.value = pad2(Math.floor(total/60))+':'+pad2(total%60);
+  // Setting .value directly (rather than the user typing) fires no 'change'
+  // event, so the double-booking check below wouldn't otherwise notice an
+  // auto-bumped end time newly overlapping something — refresh it explicitly.
+  refreshBookingAvailability();
+}
+
+/* ---- double-booking check (2026-09-28, at the user's request: "can a
+   warning be added when booking if 2 jobs overlap in times and can the next
+   job be only booked in available times in the diary") ----
+   Scope is deliberately per staff member: two different techs legitimately
+   have simultaneous jobs at different addresses all the time in a mobile
+   fleet, so that's never a conflict — only the SAME staff member can't be in
+   two places at once. The user chose "block saving" over "warn only" when
+   asked, so this is a hard stop, not just an FYI: #booking-avail-block shows
+   what's already on the diary for the selected staff/date as soon as both
+   are picked (so a dispatcher can see free time and book into it directly —
+   the "only booked in available times" half of the request), turns into a
+   clear conflict message the moment the entered start/end actually overlaps
+   one of those jobs, and handleFormSubmit's 'booking' branch refuses to save
+   while that conflict exists (see findBookingConflict() call there). */
+function otherBookingsForStaffDate(staffId, date, excludeId){
+  return state.bookings.filter(function(b){
+    return b.staffId===staffId && b.date===date && b.id!==excludeId;
+  }).sort(function(a,b){ return a.start.localeCompare(b.start); });
+}
+function timesOverlap(aStart, aEnd, bStart, bEnd){
+  return aStart < bEnd && bStart < aEnd;
+}
+function findBookingConflict(staffId, date, start, end, excludeId){
+  if(!staffId || !date || !start || !end) return null;
+  var others = otherBookingsForStaffDate(staffId, date, excludeId);
+  for(var i=0; i<others.length; i++){
+    if(timesOverlap(start, end, others[i].start, others[i].end)) return others[i];
+  }
+  return null;
+}
+function bookingAvailHTML(staffId, date, excludeId, start, end){
+  if(!staffId || !date) return '';
+  var s = getStaff(staffId);
+  var staffName = s ? s.name : 'this staff member';
+  var others = otherBookingsForStaffDate(staffId, date, excludeId);
+  var list = others.length
+    ? '<div class="helptext" style="margin-top:4px">Already booked for '+escapeHtml(staffName)+' on '+fmtDateShort(date)+': '+
+        others.map(function(o){ return fmtTime12(o.start)+'–'+fmtTime12(o.end)+' ('+escapeHtml(o.customer.name)+')'; }).join(', ') +
+      '</div>'
+    : '<div class="helptext" style="margin-top:4px">No other jobs booked for '+escapeHtml(staffName)+' on '+fmtDateShort(date)+' yet — any time is free.</div>';
+  var conflict = findBookingConflict(staffId, date, start, end, excludeId);
+  var warn = conflict
+    ? '<div class="helptext" style="margin-top:4px;color:var(--danger);font-weight:600">Overlaps '+escapeHtml(conflict.customer.name)+'\'s job ('+fmtTime12(conflict.start)+'–'+fmtTime12(conflict.end)+') — pick a different time or staff member.</div>'
+    : '';
+  return list + warn;
+}
+function refreshBookingAvailability(){
+  var block = document.getElementById('booking-avail-block');
+  var formEl = document.getElementById('booking-form');
+  if(!block || !formEl) return;
+  var staffEl = formEl.querySelector('[name=staffId]');
+  var dateEl = formEl.querySelector('[name=date]');
+  var startEl = formEl.querySelector('[name=start]');
+  var endEl = formEl.querySelector('[name=end]');
+  block.innerHTML = bookingAvailHTML(
+    staffEl?staffEl.value:'', dateEl?dateEl.value:'',
+    formEl.dataset.id||null, startEl?startEl.value:'', endEl?endEl.value:''
+  );
 }
 
 function statusStepperHTML(b){
@@ -4925,6 +4998,16 @@ function handleFormSubmit(form){
     var existing = form.dataset.id ? getBooking(form.dataset.id) : null;
     var typedRef = (fd.get('reference')||'').trim().toUpperCase();
     if(!typedRef){ toast('Reference # is required'); return; }
+    // Double-booking hard block, at the user's request ("can the next job be
+    // only booked in available times in the diary") — re-checks with the
+    // actual values about to be saved (not just trusting the live on-screen
+    // warning, in case it never fired) and refuses to save a job that clashes
+    // with another job already on the diary for the same staff member.
+    var conflictBooking = findBookingConflict(fd.get('staffId'), fd.get('date'), fd.get('start'), fd.get('end'), form.dataset.id||null);
+    if(conflictBooking){
+      toast('That time clashes with '+conflictBooking.customer.name+'\'s job ('+fmtTime12(conflictBooking.start)+'–'+fmtTime12(conflictBooking.end)+') for the same staff member — pick a different time or staff.');
+      return;
+    }
     var typedName = fd.get('custName');
     var typedPhone = fd.get('custPhone');
     var typedAddress = fd.get('address');
@@ -5127,6 +5210,18 @@ function wirePostRender(){
   if((state.view==='account' || state.view==='invoicing') && !state.xeroStatus && !state.xeroStatusLoading){
     refreshXeroStatus();
   }
+  // Double-booking availability/warning (see the block comment above
+  // findBookingConflict()) — these 4 fields live only in the DOM, not
+  // state.bookingDraft, the same as every other plain field on this form,
+  // so their live check reads straight off the inputs via
+  // refreshBookingAvailability() and writes directly into
+  // #booking-avail-block rather than going through render() — a render()
+  // here would rebuild the native date/time/select widgets mid-interaction,
+  // exactly the class of bug Bug 14 took 11 attempts to track down.
+  ['staffId','date','start','end'].forEach(function(name){
+    var f = document.querySelector('#booking-form [name='+name+']');
+    if(f) f.addEventListener('change', refreshBookingAvailability);
+  });
   var searchInput = document.getElementById('jobs-search-input');
   if(searchInput){
     searchInput.addEventListener('input', function(){

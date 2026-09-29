@@ -628,6 +628,22 @@ function fmtMoney(n){
   n = Number(n)||0;
   return '$' + n.toLocaleString('en-AU',{minimumFractionDigits:2, maximumFractionDigits:2});
 }
+// 2026-09-29, at the user's request ("All prices on products and services
+// are gst inclusive please change this") — then, when asked, extended to
+// the hourly labour rate too ("make labour GST-inclusive too"). Every
+// catalog price and the labour rate are now the actual final amount
+// charged, GST already baked in — nothing gets 10% added on top of them
+// anymore. What used to be "subtotal, then +10% GST, then total" is now
+// "total (the raw sum of the invoice's line amounts, unchanged), then GST
+// backed OUT of it for the subtotal/BAS breakdown." The GST component
+// embedded in a GST-inclusive total is total - total/1.1, which simplifies
+// to exactly total/11 — the one bit of tax maths this whole feature rests
+// on, so it's centralised here rather than repeated at each call site
+// (the live Build-invoice draft screen and finalizeInvoice() below).
+function gstBreakdown(rawTotal){
+  var gst = rawTotal / 11;
+  return { subtotal: rawTotal - gst, gst: gst, total: rawTotal };
+}
 function invoiceStatusPill(iv){
   if(iv.status==='void') return {cls:'void', label:'Void'};
   if(iv.status==='paid') return {cls:'paid', label:'Paid'};
@@ -1446,11 +1462,13 @@ function buildSeedTime(){
 }
 function buildSeedInvoices(){
   var t = addDays(todayISO(),-6);
-  var subtotal = 300;
+  // 2026-09-29: $120/hr is now a GST-inclusive rate (see gstBreakdown()) —
+  // 2.5hrs @ $120/hr = $300 total charged, not $300 + 10% on top.
+  var seedTotals = gstBreakdown(300);
   return [
     {id:'inv_seed1', bookingId:'b6', customerName:'Western Sydney Fleet Co', reference:'PO-77410',
       lineItems:[{desc:'Labour — Mechanical service (2.5 hrs @ $120/hr)', amount:300}],
-      subtotal:300, gst:30, total:330, status:'sent', createdAt:Date.now(), sentAt:Date.now(), xeroInvoiceId:null}
+      subtotal:seedTotals.subtotal, gst:seedTotals.gst, total:seedTotals.total, status:'sent', createdAt:Date.now(), sentAt:Date.now(), xeroInvoiceId:null}
   ];
 }
 
@@ -2931,7 +2949,7 @@ function accountView(){
       '<div class="card card-pad" style="margin-top:14px">' +
         '<div class="section-sub">Billing default</div>' +
         '<div class="helptext" style="margin-top:2px">Pre-fills the hourly rate on every new booking. Existing bookings keep whatever rate they were created with.</div>' +
-        '<div class="field" style="margin-top:10px;max-width:200px"><label>Labour rate ($/hr, ex GST)</label><input type="number" name="labourRate" min="0" step="5" value="'+(s.labourRate!=null?s.labourRate:120)+'" required></div>' +
+        '<div class="field" style="margin-top:10px;max-width:200px"><label>Labour rate ($/hr, GST inclusive)</label><input type="number" name="labourRate" min="0" step="5" value="'+(s.labourRate!=null?s.labourRate:120)+'" required></div>' +
       '</div>' +
       '<button type="submit" class="btn btn-primary btn-block" style="margin-top:14px">Save changes</button>' +
     '</form>' +
@@ -3532,7 +3550,7 @@ function bookingModalHTML(m){
     // under "Known simplifications" below for what was actually found.
     '<label class="check-row"><input type="checkbox" name="saveVehicle"> Also save this vehicle to the customer\'s record</label>' +
     '<div class="field"><label>Job address</label><input type="text" name="address" value="'+(b?escapeHtml(b.address):'')+'" required></div>' +
-    '<div class="field"><label>Hourly rate ($/hr, ex GST)</label><input type="number" name="rate" min="0" step="5" value="'+(b?b.rate:state.settings.labourRate)+'" required></div>' +
+    '<div class="field"><label>Hourly rate ($/hr, GST inclusive)</label><input type="number" name="rate" min="0" step="5" value="'+(b?b.rate:state.settings.labourRate)+'" required></div>' +
     '<div class="section-sub" style="margin-top:10px">Photos</div>' +
     '<div class="helptext" style="margin-top:2px">Snap before/after shots, damage, or calibration certificates on the job — they carry through automatically when this job is invoiced.</div>' +
     '<div class="photo-grid" id="booking-photos-block" style="margin-top:8px">'+bookingPhotosHTML(state.bookingDraft.photos)+'</div>' +
@@ -3829,7 +3847,7 @@ function serviceItemModalHTML(m){
   var form = '<form id="service-form" data-form="service" data-id="'+(s?s.id:'')+'">' +
     '<div class="field-row">' +
       '<div class="field"><label>Item code</label><input type="text" name="code" class="mono" value="'+(s?escapeHtml(s.code):'')+'" placeholder="e.g. BRK-F" required></div>' +
-      '<div class="field"><label>Sales price ($, ex GST)</label><input type="number" name="salesUnitPrice" min="0" step="0.01" value="'+(s&&s.salesUnitPrice!=null?s.salesUnitPrice:'')+'" required></div>' +
+      '<div class="field"><label>Sales price ($, GST inclusive)</label><input type="number" name="salesUnitPrice" min="0" step="0.01" value="'+(s&&s.salesUnitPrice!=null?s.salesUnitPrice:'')+'" required></div>' +
     '</div>' +
     '<div class="field"><label>Name</label><input type="text" name="name" value="'+(s?escapeHtml(s.name):'')+'" placeholder="e.g. Brake pads front" required></div>' +
     '<div class="field"><label>Sales description</label><textarea name="salesDescription" placeholder="What this job/item involves — shown on bookings and invoices">'+(s?escapeHtml(s.salesDescription||''):'')+'</textarea></div>' +
@@ -3868,7 +3886,7 @@ function productItemModalHTML(m){
   var form = '<form id="product-form" data-form="product" data-id="'+(p?p.id:'')+'">' +
     '<div class="field-row">' +
       '<div class="field"><label>Item code</label><input type="text" name="code" class="mono" value="'+(p?escapeHtml(p.code):'')+'" placeholder="e.g. OIL-5W30" required></div>' +
-      '<div class="field"><label>Sales price ($, ex GST)</label><input type="number" name="salesUnitPrice" min="0" step="0.01" value="'+(p&&p.salesUnitPrice!=null?p.salesUnitPrice:'')+'" required></div>' +
+      '<div class="field"><label>Sales price ($, GST inclusive)</label><input type="number" name="salesUnitPrice" min="0" step="0.01" value="'+(p&&p.salesUnitPrice!=null?p.salesUnitPrice:'')+'" required></div>' +
     '</div>' +
     '<div class="field"><label>Name</label><input type="text" name="name" value="'+(p?escapeHtml(p.name):'')+'" placeholder="e.g. Engine oil 5W-30 (5L)" required></div>' +
     '<div class="field"><label>Sales description</label><textarea name="salesDescription" placeholder="What this part is — shown on bookings and invoices">'+(p?escapeHtml(p.salesDescription||''):'')+'</textarea></div>' +
@@ -4081,9 +4099,8 @@ function invoiceModalHTML(m){
   }).join('');
 
   var extraTotal = state.invoiceDraft.extraLines.reduce(function(a,l){return a+l.qty*l.unitPrice;},0);
-  var subtotal = laborAmt + extraTotal;
-  var gst = subtotal*0.1;
-  var total = subtotal+gst;
+  var draftTotals = gstBreakdown(laborAmt + extraTotal);
+  var subtotal = draftTotals.subtotal, gst = draftTotals.gst, total = draftTotals.total;
 
   var body = '<div class="card card-pad">' +
       '<div class="row-between"><strong>'+escapeHtml(b.customer.name)+'</strong>'+(b.vehicle.rego?'<span class="mono helptext">'+escapeHtml(b.vehicle.rego)+'</span>':'')+'</div>' +
@@ -4787,9 +4804,13 @@ async function finalizeInvoice(bookingId, send){
     var desc = l.desc+' ('+l.qty+' × '+fmtMoney(l.unitPrice)+(linkedMins?' · '+fmtHrsMin(linkedMins)+' logged':'')+')';
     lineItems.push({desc:desc, amount:l.qty*l.unitPrice, kind: l.kind||null, catalogId: l.catalogId||null, qty:l.qty, unitPrice:l.unitPrice});
   });
-  var subtotal = lineItems.reduce(function(a,l){return a+l.amount;},0);
-  var gst = subtotal*0.1;
-  var total = subtotal+gst;
+  // 2026-09-29, at the user's request ("All prices on products and services
+  // are gst inclusive please change this", extended to labour too): every
+  // line's amount above is already the final, GST-inclusive charge — see
+  // gstBreakdown() for the maths. This used to be subtotal -> +10% -> total;
+  // now it's total (this raw sum, unchanged) -> GST backed out of it.
+  var finalTotals = gstBreakdown(lineItems.reduce(function(a,l){return a+l.amount;},0));
+  var subtotal = finalTotals.subtotal, gst = finalTotals.gst, total = finalTotals.total;
   var photos = state.invoiceDraft ? state.invoiceDraft.photos : [];
   var invoice = {
     id: uid('inv'), bookingId: bookingId, customerName: b.customer.name, reference: b.reference||'',

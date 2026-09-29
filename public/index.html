@@ -2525,9 +2525,20 @@ function scheduleView(){
   if(state.scheduleMode==='day'){
     body = scheduleGridHTML([state.selectedDate]);
   } else {
+    // 2026-09-29, at the user's request ("remove saturday and sunday from
+    // the calander to make more space"): Week view now shows Monday-Friday
+    // only — 5 columns instead of 7, so each day gets more width in the
+    // grid. `start` here is always the Monday of the selected date's week
+    // (the -((getDay()+6)%7) offset maps Sun..Sat -> 6,0,1,2,3,4,5 days
+    // back, landing on Monday every time), so i<5 below is exactly
+    // Mon..Fri — i<7 would have carried through to Sunday. A booking that's
+    // genuinely scheduled on a Saturday or Sunday is untouched by this and
+    // still shows up normally in Day view (jump to it via the day-strip
+    // above, which still includes every day) and in the Jobs list — it's
+    // only the Week grid's columns that skip the weekend now.
     var start = addDays(state.selectedDate, -((new Date(state.selectedDate+'T00:00:00').getDay()+6)%7));
     var weekDates = [];
-    for(var i=0;i<7;i++){ weekDates.push(addDays(start,i)); }
+    for(var i=0;i<5;i++){ weekDates.push(addDays(start,i)); }
     body = scheduleGridHTML(weekDates);
   }
 

@@ -399,6 +399,22 @@
   .sched-block .sb-notes{font-size:10.5px;color:var(--ink-soft);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .sched-block .sb-pill{position:absolute;top:3px;right:3px;transform:scale(.76);transform-origin:top right;}
   .sched-block.sched-dragging{cursor:grabbing;box-shadow:var(--shadow-2);opacity:.97;z-index:999;}
+  /* Hold-to-drag feedback: pressing a block must be held still for
+     SCHED_HOLD_MS (3s) before a drag can begin, so a touch that merely
+     slips shouldn't reposition a job. .sched-holding is added the instant
+     the finger goes down; .sched-hold-fill is added a frame later so the
+     ::after bar's width transition actually animates (rather than jumping
+     straight to 100%), giving a visible 3-second progress fill. .sched-armed
+     replaces both once the hold completes, signalling "let go of your grip
+     now and drag" right up until real movement starts and the normal
+     .sched-dragging visual (position:fixed, following the pointer) takes over. */
+  .sched-block.sched-holding{transition:transform .15s ease;transform:scale(.97);}
+  .sched-block.sched-holding::after{
+    content:'';position:absolute;left:0;right:0;bottom:0;height:3px;width:0%;
+    background:var(--accent);border-radius:0 0 6px 6px;transition:width 0s linear;
+  }
+  .sched-block.sched-holding.sched-hold-fill::after{width:100%;transition:width 3000ms linear;}
+  .sched-block.sched-armed{box-shadow:0 0 0 2px var(--accent),var(--shadow-2);transform:scale(1.02);}
 
   /* ---------- time ---------- */
   .timer-card{
@@ -2497,6 +2513,12 @@ var SCHED_HOUR_END = 17;    // 5 PM
 var SCHED_HOUR_PX_DAY = 72; // taller rows in single-day view — easier to tap precisely
 var SCHED_HOUR_PX_WEEK = 52;
 var SCHED_SNAP_MIN = 15;
+// 2026-10-01, at the user's request ("can it be you need to hold the job
+// down for 3 sec before it will move as jobs are accidently been moved to
+// the incorect times"): see the big comment above startSchedDrag() for how
+// these two are used together.
+var SCHED_HOLD_MS = 3000;          // how long a block must be held still before a drag can start
+var SCHED_HOLD_MOVE_CANCEL_PX = 12; // movement beyond this during the hold reads as "not a hold" (a tap or a scroll attempt), not a jitter to ignore
 
 function scheduleView(){
   // build a rolling strip centered loosely around today, always including selectedDate
@@ -2736,7 +2758,7 @@ function startSchedDrag(e, el){
   });
   if(cols.length===0) return;
   var rect = el.getBoundingClientRect();
-  schedDrag = {
+  var d = {
     id: id, el: el, pointerId: e.pointerId,
     startClientX: e.clientX, startClientY: e.clientY,
     offsetX: e.clientX-rect.left, offsetY: e.clientY-rect.top,
@@ -2744,13 +2766,57 @@ function startSchedDrag(e, el){
     durationMin: Math.max(15, timeToMin(b.end)-timeToMin(b.start)),
     cols: cols,
     moved: false,
+    armed: false,
+    holdTimer: null,
     currentDate: b.date, currentStart: b.start
   };
+  schedDrag = d;
   try{ el.setPointerCapture(e.pointerId); }catch(err){}
+
+  // Hold-to-drag: show the press state immediately, then — a frame later,
+  // so the browser has painted the 0% state first — add the class that
+  // kicks off the 3-second CSS fill (see the CSS comment above
+  // .sched-holding). If the hold gets cancelled before the timer fires
+  // (moved too far, or released early), this rAF callback is a no-op
+  // because schedDrag will no longer be this d by then.
+  el.classList.add('sched-holding');
+  requestAnimationFrame(function(){
+    requestAnimationFrame(function(){
+      if(schedDrag===d) el.classList.add('sched-hold-fill');
+    });
+  });
+
+  d.holdTimer = setTimeout(function(){
+    if(schedDrag!==d) return; // already released or cancelled
+    armSchedDrag(d);
+  }, SCHED_HOLD_MS);
+}
+
+// Fires once the pointer has been held still on a block for SCHED_HOLD_MS.
+// From this point a drag may begin the moment the pointer actually moves —
+// see the `!d.armed` branch in moveSchedDrag below.
+function armSchedDrag(d){
+  d.armed = true;
+  d.holdTimer = null;
+  d.el.classList.remove('sched-holding','sched-hold-fill');
+  d.el.classList.add('sched-armed');
+  if(navigator.vibrate){ try{ navigator.vibrate(25); }catch(err){} }
+}
+
+// Called when the pointer moves too far (or is released) before the hold
+// timer completes — this is a tap or a scroll attempt, not a deliberate
+// hold-to-drag, so back out completely and leave the normal click/scroll
+// behaviour untouched.
+function cancelHoldOnly(d){
+  if(d.holdTimer){ clearTimeout(d.holdTimer); d.holdTimer = null; }
+  d.el.classList.remove('sched-holding','sched-hold-fill','sched-armed');
+  try{ d.el.releasePointerCapture(d.pointerId); }catch(err){}
+  if(schedDrag===d) schedDrag = null;
 }
 
 function beginSchedDragVisual(d){
   var el = d.el;
+  el.classList.remove('sched-holding','sched-hold-fill','sched-armed');
   el.classList.add('sched-dragging');
   el.style.position = 'fixed';
   el.style.left = (d.startClientX-d.offsetX)+'px';
@@ -2796,23 +2862,35 @@ function updateSchedDragVisual(d, e){
 
 function moveSchedDrag(e){
   if(!schedDrag || e.pointerId!==schedDrag.pointerId) return;
-  if(!schedDrag.moved){
-    var dx = e.clientX-schedDrag.startClientX, dy = e.clientY-schedDrag.startClientY;
-    if(Math.abs(dx)<6 && Math.abs(dy)<6) return; // still could just be a tap — wait for real movement
-    schedDrag.moved = true;
-    beginSchedDragVisual(schedDrag);
+  var d = schedDrag;
+  if(!d.armed){
+    // Still in the 3-second hold-still phase. A little wobble is fine, but
+    // real movement this early means the finger slipped, or this was a
+    // scroll/tap attempt — not a deliberate hold-to-drag — so cancel the
+    // hold outright rather than letting it arm later.
+    var dx = e.clientX-d.startClientX, dy = e.clientY-d.startClientY;
+    if(Math.abs(dx)>=SCHED_HOLD_MOVE_CANCEL_PX || Math.abs(dy)>=SCHED_HOLD_MOVE_CANCEL_PX){
+      cancelHoldOnly(d);
+    }
+    return;
+  }
+  if(!d.moved){
+    d.moved = true;
+    beginSchedDragVisual(d);
   }
   e.preventDefault();
-  updateSchedDragVisual(schedDrag, e);
+  updateSchedDragVisual(d, e);
 }
 
 function endSchedDrag(e){
   var d = schedDrag;
   if(!d || e.pointerId!==d.pointerId) return;
   schedDrag = null;
+  if(d.holdTimer){ clearTimeout(d.holdTimer); d.holdTimer = null; }
+  d.el.classList.remove('sched-holding','sched-hold-fill','sched-armed');
   try{ d.el.releasePointerCapture(d.pointerId); }catch(err){}
   document.body.style.userSelect = '';
-  if(!d.moved) return; // a plain tap — let the normal click open the booking
+  if(!d.moved) return; // never got past the hold into an actual drag — a plain tap, or a hold that was released before moving — let the normal click open the booking
 
   schedDragJustEnded = true;
   var b = getBooking(d.id);
@@ -2834,7 +2912,10 @@ function endSchedDrag(e){
 
 function cancelSchedDrag(e){
   if(!schedDrag || (e && e.pointerId!==schedDrag.pointerId)) return;
-  var wasMoved = schedDrag.moved;
+  var d = schedDrag;
+  var wasMoved = d.moved;
+  if(d.holdTimer){ clearTimeout(d.holdTimer); d.holdTimer = null; }
+  d.el.classList.remove('sched-holding','sched-hold-fill','sched-armed');
   schedDrag = null;
   document.body.style.userSelect = '';
   if(wasMoved) render(); // discard the drag, resync the DOM from real state

@@ -4783,7 +4783,7 @@ function invoicePhotosHTML(photos, editable, scope, invId){
   var thumbs = photos.map(function(p,i){
     var remove = editable ? '<button type="button" class="photo-thumb-remove" data-action="remove-invoice-photo" data-idx="'+i+'">'+ICONS.close+'</button>' : '';
     return '<div class="photo-thumb" data-action="view-photo" data-scope="'+scope+'" data-idx="'+i+'"'+(invId?' data-inv="'+invId+'"':'')+'>' +
-      '<img src="'+p.dataUrl+'" alt="Job photo">' + remove +
+      '<img src="'+(p.assetUrl||p.dataUrl)+'" alt="Job photo">' + remove +
     '</div>';
   }).join('');
   var addBtn = '';
@@ -4854,6 +4854,44 @@ function uploadPhotoAsset(photo, blob){
     photo.assetUrl = res.url;
   }).catch(function(e){ console.warn('photo upload failed', e); });
 }
+/* 2026-10-01, diagnosing "photos from my phone appear then vanish later":
+   every photo's full compressed image also lived in `photo.dataUrl` (a
+   base64 data: URL, set synchronously by resizeImageFile so the thumbnail
+   has something to show before the real upload finishes) — and that same
+   dataUrl was being saved as-is into photos_json on the booking/invoice row
+   in D1, on top of the real copy already sitten in R2 via uploadPhotoAsset
+   above. D1 caps a single row/column at 2,000,000 bytes. A booking photo
+   compressed to 1280px/quality 0.6 is commonly 100-400KB as a raw JPEG —
+   30%+ bigger again once base64-encoded — so a handful of photos on one
+   booking could already brush up against that 2MB ceiling, and became much
+   more likely to cross it the moment the photo cap was raised from 6 to 10
+   (2026-09-29, same day). When the save's PUT request fails for a reason
+   like that, saveDoc()'s own catch path falls back to a LOCAL-ONLY update
+   (with a toast easy to miss while the next job's already moving) — so the
+   photo stays visible right up until the next background poll pulls the
+   real, photo-less row back from the server and overwrites it: exactly
+   "appears, then vanishes later".
+   The actual fix is that dataUrl never needed to be persisted at all —
+   emailPhotosToCustomer() and the Xero photo-attach logic in src/worker.js
+   already fetch every photo straight from R2 via photoId/assetId, never
+   dataUrl. photosForSave() below drops dataUrl from any photo whose R2
+   upload has already succeeded (assetUrl set) right before it's handed to
+   saveDoc() — see its two call sites, the booking-save branch of
+   handleFormSubmit() and finalizeInvoice() — so what actually reaches D1 is
+   just a handful of short URL strings, not a stack of base64 images,
+   regardless of how many photos a job ends up with. A photo whose upload
+   hasn't finished yet (or genuinely failed) keeps its dataUrl rather than
+   being silently dropped — slower/larger in that one case, but the
+   alternative is losing the photo outright. Every place that actually
+   displays a photo (bookingPhotosHTML/invoicePhotosHTML's thumbnails, and
+   the view-photo lightbox for a draft OR an already-saved booking/invoice)
+   was switched to prefer assetUrl and fall back to dataUrl, so this is a
+   transparent change either way a photo's displayed. */
+function photosForSave(photos){
+  return (photos||[]).map(function(p){
+    return p.assetUrl ? {id: p.id, assetId: p.assetId, assetUrl: p.assetUrl} : p;
+  });
+}
 async function addInvoicePhotos(fileList){
   if(!state.invoiceDraft) return;
   var files = Array.prototype.filter.call(fileList, function(f){ return f.type.indexOf('image/')===0; });
@@ -4896,7 +4934,7 @@ function bookingPhotosHTML(photos){
   photos = photos || [];
   var thumbs = photos.map(function(p,i){
     return '<div class="photo-thumb" data-action="view-photo" data-scope="booking-draft" data-idx="'+i+'">' +
-      '<img src="'+p.dataUrl+'" alt="Job photo">' +
+      '<img src="'+(p.assetUrl||p.dataUrl)+'" alt="Job photo">' +
       '<button type="button" class="photo-thumb-remove" data-action="remove-booking-photo" data-idx="'+i+'">'+ICONS.close+'</button>' +
     '</div>';
   }).join('');
@@ -5369,17 +5407,21 @@ function handleAction(el){
     return;
   }
   if(a==='view-photo'){
+    // 2026-10-01: prefer assetUrl over dataUrl here too (see photosForSave()
+    // above) — a photo on an already-SAVED booking/invoice (the 'saved'
+    // scope, below) may have no dataUrl at all once this fix is live, since
+    // that's never persisted once a real R2 copy exists.
     var photoSrc = null;
     if(el.dataset.scope==='draft'){
       var dp = state.invoiceDraft && state.invoiceDraft.photos[Number(el.dataset.idx)];
-      photoSrc = dp ? dp.dataUrl : null;
+      photoSrc = dp ? (dp.assetUrl||dp.dataUrl) : null;
     } else if(el.dataset.scope==='booking-draft'){
       var bp = state.bookingDraft && state.bookingDraft.photos && state.bookingDraft.photos[Number(el.dataset.idx)];
-      photoSrc = bp ? bp.dataUrl : null;
+      photoSrc = bp ? (bp.assetUrl||bp.dataUrl) : null;
     } else {
       var ivp = state.invoices.find(function(x){return x.id===el.dataset.inv;});
       var sp = ivp && ivp.photos && ivp.photos[Number(el.dataset.idx)];
-      photoSrc = sp ? sp.dataUrl : null;
+      photoSrc = sp ? (sp.assetUrl||sp.dataUrl) : null;
     }
     if(photoSrc) openPhotoLightbox(photoSrc);
     return;
@@ -5500,7 +5542,7 @@ async function finalizeInvoice(bookingId, send){
   // now it's total (this raw sum, unchanged) -> GST backed out of it.
   var finalTotals = gstBreakdown(lineItems.reduce(function(a,l){return a+l.amount;},0));
   var subtotal = finalTotals.subtotal, gst = finalTotals.gst, total = finalTotals.total;
-  var photos = state.invoiceDraft ? state.invoiceDraft.photos : [];
+  var photos = photosForSave(state.invoiceDraft ? state.invoiceDraft.photos : []);
   // 2026-09-29 fix: re-saving a draft that was opened via the "resume this
   // draft" path (invoiceModalHTML()'s editingInvoice branch) reuses that
   // SAME invoice id and its original createdAt — a plain upsert-by-id on the
@@ -5773,7 +5815,7 @@ function handleFormSubmit(form){
         address: typedAddress, rate: Number(fd.get('rate'))||0,
         notes: fd.get('notes'),
         serviceItems: bookingDraftAtSubmit ? bookingDraftAtSubmit.serviceItems : [],
-        photos: bookingDraftAtSubmit ? bookingDraftAtSubmit.photos : [],
+        photos: photosForSave(bookingDraftAtSubmit ? bookingDraftAtSubmit.photos : []),
         status: existing ? existing.status : 'booked',
         createdAt: existing ? existing.createdAt : Date.now()
       };

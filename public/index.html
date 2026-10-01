@@ -2517,7 +2517,10 @@ var SCHED_SNAP_MIN = 15;
 // down for 3 sec before it will move as jobs are accidently been moved to
 // the incorect times"): see the big comment above startSchedDrag() for how
 // these two are used together.
-var SCHED_HOLD_MS = 3000;          // how long a block must be held still before a drag can start
+// 2026-10-01, same day — "The time is too long make it less": shortened
+// from 3000ms to 1000ms. Easy to retune again, up or down, by just
+// changing this one number.
+var SCHED_HOLD_MS = 1000;          // how long a block must be held still before a drag can start
 var SCHED_HOLD_MOVE_CANCEL_PX = 12; // movement beyond this during the hold reads as "not a hold" (a tap or a scroll attempt), not a jitter to ignore
 
 function scheduleView(){

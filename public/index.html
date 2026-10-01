@@ -4690,6 +4690,7 @@ function invoiceModalHTML(m){
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">' +
         '<button type="button" class="btn btn-sm" data-action="open-service-picker">'+ICONS.plus+' Add from service list</button>' +
         '<button type="button" class="btn btn-sm" data-action="open-product-picker">'+ICONS.plus+' Add from products list</button>' +
+        '<button type="button" class="btn btn-sm" data-action="add-custom-line">'+ICONS.plus+' Add custom item</button>' +
       '</div>' +
       totalsHTML(subtotal, gst, total) +
     '</div>' +
@@ -4811,8 +4812,9 @@ function standaloneInvoiceModalHTML(m, editingInvoice){
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">' +
         '<button type="button" class="btn btn-sm" data-action="open-service-picker">'+ICONS.plus+' Add from service list</button>' +
         '<button type="button" class="btn btn-sm" data-action="open-product-picker">'+ICONS.plus+' Add from products list</button>' +
+        '<button type="button" class="btn btn-sm" data-action="add-custom-line">'+ICONS.plus+' Add custom item</button>' +
       '</div>' +
-      (state.invoiceDraft.extraLines.length ? totalsHTML(subtotal, gst, total) : '<div class="helptext" style="margin-top:10px">Add a line from the service or product list to get started.</div>') +
+      (state.invoiceDraft.extraLines.length ? totalsHTML(subtotal, gst, total) : '<div class="helptext" style="margin-top:10px">Add a line from the service or product list, or add a custom item, to get started.</div>') +
     '</div>' +
     '<div class="card card-pad">' +
       '<div class="section-sub">Photos</div>' +
@@ -5429,6 +5431,30 @@ function handleAction(el){
   if(a==='remove-invoice-line'){
     var idx = Number(el.dataset.idx);
     state.invoiceDraft.extraLines.splice(idx,1); render(); return;
+  }
+  // 2026-10-01, at the user's request ("Just add a product that can be
+  // modified to be anything"): raised while trying to add a product mid-
+  // invoice that wasn't already in the Products catalog — the only options
+  // on screen were "Add from service list"/"Add from products list", both
+  // of which only ever pick an EXISTING catalog entry (see the comment
+  // above extraLinesHTML's button row, 2026-09-28: the old freeform "Extra
+  // item" form was deliberately removed that day for being a messy
+  // three-box row, with no replacement for a genuinely one-off line). This
+  // restores that capability without reintroducing the messy layout: a
+  // blank line is pushed straight into extraLines and rendered through the
+  // exact same single-row desc/qty/price editor every service/product line
+  // already uses (added 2026-09-28) — so "modified to be anything" is just
+  // typing into the same inputs already on screen, not a new UI at all.
+  // kind:'custom' (catalogId:null) marks it as never having come from the
+  // catalog, matching how 'service'/'product' lines mark theirs.
+  if(a==='add-custom-line'){
+    if(!state.invoiceDraft) return;
+    state.invoiceDraft.extraLines.push({desc:'', qty:1, unitPrice:0, kind:'custom', catalogId:null});
+    var newLineIdx = state.invoiceDraft.extraLines.length-1;
+    render();
+    var newDescInput = document.querySelector('[data-change="edit-line-desc"][data-idx="'+newLineIdx+'"]');
+    if(newDescInput) newDescInput.focus();
+    return;
   }
   if(a==='open-service-picker'){
     if(!state.invoiceDraft) return;

@@ -400,11 +400,11 @@
   .sched-block .sb-pill{position:absolute;top:3px;right:3px;transform:scale(.76);transform-origin:top right;}
   .sched-block.sched-dragging{cursor:grabbing;box-shadow:var(--shadow-2);opacity:.97;z-index:999;}
   /* Hold-to-drag feedback: pressing a block must be held still for
-     SCHED_HOLD_MS (3s) before a drag can begin, so a touch that merely
+     SCHED_HOLD_MS (1s) before a drag can begin, so a touch that merely
      slips shouldn't reposition a job. .sched-holding is added the instant
      the finger goes down; .sched-hold-fill is added a frame later so the
      ::after bar's width transition actually animates (rather than jumping
-     straight to 100%), giving a visible 3-second progress fill. .sched-armed
+     straight to 100%), giving a visible 1-second progress fill. .sched-armed
      replaces both once the hold completes, signalling "let go of your grip
      now and drag" right up until real movement starts and the normal
      .sched-dragging visual (position:fixed, following the pointer) takes over. */
@@ -413,7 +413,7 @@
     content:'';position:absolute;left:0;right:0;bottom:0;height:3px;width:0%;
     background:var(--accent);border-radius:0 0 6px 6px;transition:width 0s linear;
   }
-  .sched-block.sched-holding.sched-hold-fill::after{width:100%;transition:width 3000ms linear;}
+  .sched-block.sched-holding.sched-hold-fill::after{width:100%;transition:width 1000ms linear;}
   .sched-block.sched-armed{box-shadow:0 0 0 2px var(--accent),var(--shadow-2);transform:scale(1.02);}
 
   /* ---------- time ---------- */

@@ -2269,6 +2269,13 @@ function render(){
     var el = document.getElementById(id);
     if(el) prevScrollTops[id] = el.scrollTop;
   });
+  // 2026-10-10 ("on my iphone when i scroll across the dates ... it keeps
+  // returning to today's date"): the Schedule's date strip scrolls
+  // HORIZONTALLY, and only scrollTop was being preserved here — so the
+  // 4-second background refresh rebuilt the strip and snapped it back to
+  // its start. Preserve its scrollLeft too.
+  var stripEl = document.getElementById('day-strip');
+  var prevStripLeft = stripEl ? stripEl.scrollLeft : null;
   var prevModalPanel = mroot.querySelector('.modal-panel');
   var modalScrollTop = prevModalPanel ? prevModalPanel.scrollTop : 0;
   app.innerHTML =
@@ -2295,6 +2302,7 @@ function render(){
     var el = document.getElementById(id);
     if(el) el.scrollTop = prevScrollTops[id];
   });
+  if(prevStripLeft!=null){ var stripEl2 = document.getElementById('day-strip'); if(stripEl2) stripEl2.scrollLeft = prevStripLeft; }
   var newModalPanel = mroot.querySelector('.modal-panel');
   if(newModalPanel) newModalPanel.scrollTop = modalScrollTop;
 }
@@ -2405,7 +2413,16 @@ document.addEventListener('mouseup', clearPointerActive);
 document.addEventListener('touchend', clearPointerActive, {passive:true});
 document.addEventListener('touchcancel', clearPointerActive, {passive:true});
 var backgroundRenderTimer = null;
+// iOS keeps the date strip gliding by momentum after the finger lifts, which
+// pointerActive doesn't cover — a rebuild then stops the glide dead. Note when
+// the strip last scrolled and hold background refreshes off until it settles.
+var lastStripScroll = 0;
+document.addEventListener('scroll', function(e){
+  var t = e.target;
+  if(t && t.classList && t.classList.contains('day-strip')) lastStripScroll = Date.now();
+}, true);
 function backgroundRender(){
+  if(Date.now() - lastStripScroll < 400){ setTimeout(backgroundRender, 300); return; }
   if(isEditingTextField() || filePickerOpen || pointerActive){ backgroundRenderPending = true; return; }
   if(backgroundRenderTimer) return; // a coalesced render is already queued for this burst
   backgroundRenderTimer = setTimeout(function(){
@@ -2581,7 +2598,7 @@ function scheduleView(){
   // build a rolling strip centered loosely around today, always including selectedDate
   var base = todayISO();
   var strip = [];
-  for(var k=-2;k<=11;k++){ strip.push(addDays(base,k)); }
+  for(var k=-2;k<=27;k++){ strip.push(addDays(base,k)); }
   if(strip.indexOf(state.selectedDate)===-1){ strip.push(state.selectedDate); strip.sort(); }
 
   var stripHTML = strip.map(function(iso){
@@ -2636,7 +2653,7 @@ function scheduleView(){
       '</div>' +
       modeToggle +
     '</div>' +
-    '<div class="day-strip">'+stripHTML+'</div>' +
+    '<div class="day-strip" id="day-strip">'+stripHTML+'</div>' +
     '<div class="chip-row">'+staffChips+'</div>' +
     body;
 }

@@ -378,6 +378,7 @@ export async function handlePortalApi(request, env, ctx, url, path) {
   if (path === '/portal/me' && method === 'GET') return portalMe(env, user);
   if (path === '/portal/password' && method === 'POST') return portalChangePassword(request, env, user);
   if (path === '/portal/requests' && method === 'POST') return portalCreateRequest(request, env, ctx, user, url);
+  if (path === '/portal/availability' && method === 'GET') return portalAvailability(env, url);
   const cancelMatch = path.match(/^\/portal\/requests\/([A-Za-z0-9_]+)\/cancel$/);
   if (cancelMatch && method === 'POST') return portalCancelRequest(env, ctx, user, cancelMatch[1]);
   if (path === '/portal/photos' && method === 'POST') return portalUploadPhoto(request, env, user);
@@ -385,6 +386,42 @@ export async function handlePortalApi(request, env, ctx, url, path) {
   if (photoMatch && method === 'GET') return portalServePhoto(env, user, photoMatch[1]);
 
   return json({ error: 'not_found' }, 404);
+}
+
+/* ---- availability (2026-10-10, "blank out the times that are already
+   booked") ----
+   The customer isn't choosing a technician, so a start time only counts as
+   taken when EVERY active staff member already has a job on the books that
+   covers it (a job that is still open — completed/invoiced ones no longer
+   hold anyone's time, same rule as the staff diary). Slots are the same
+   half-hours the portal offers (6:00 am – 5:30 pm). Only times are sent back
+   — never who or what the other jobs are. */
+const PORTAL_SLOT_TIMES = (() => {
+  const out = [];
+  for (let h = 6; h <= 17; h++) for (const m of ['00', '30']) out.push((h < 10 ? '0' : '') + h + ':' + m);
+  return out;
+})();
+function addMinutesHHMM(t, mins) {
+  const total = Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5)) + mins;
+  return String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
+}
+async function blockedSlotsForDate(env, date) {
+  const staff = await env.DB.prepare('SELECT id FROM staff WHERE active = 1').all();
+  const staffIds = (staff.results || []).map((r) => r.id);
+  if (!staffIds.length) return [];
+  const rows = await env.DB.prepare(
+    "SELECT staff_id, start, end FROM bookings WHERE date = ? AND status NOT IN ('completed','invoiced')"
+  ).bind(date).all();
+  const jobs = rows.results || [];
+  return PORTAL_SLOT_TIMES.filter((t) => {
+    const slotEnd = addMinutesHHMM(t, 30);
+    return staffIds.every((sid) => jobs.some((j) => j.staff_id === sid && j.start < slotEnd && t < j.end));
+  });
+}
+async function portalAvailability(env, url) {
+  const date = str(url.searchParams.get('date'), 10);
+  if (!validDate(date)) return json({ error: 'invalid_fields' }, 400);
+  return json({ date, blocked: await blockedSlotsForDate(env, date) });
 }
 
 async function portalLogin(request, env) {
@@ -580,6 +617,10 @@ async function portalCreateRequest(request, env, ctx, user, url) {
   else if (preferredDate > addDaysISO(todayISO(), 365)) errors.preferredDate = 'Pick a date within the next year.';
   if (!validTime(preferredStart) || preferredStart < '05:00' || preferredStart > '20:00') errors.preferredStart = 'Pick a start time between 5:00 am and 8:00 pm.';
   if (photoIds.length > MAX_PHOTOS) errors.photos = 'Up to ' + MAX_PHOTOS + ' photos.';
+  if (!errors.preferredDate && !errors.preferredStart) {
+    const blocked = await blockedSlotsForDate(env, preferredDate);
+    if (blocked.indexOf(preferredStart) !== -1) errors.preferredStart = 'That time has just been taken — please pick another.';
+  }
   if (Object.keys(errors).length) return json({ error: 'invalid_fields', fields: errors }, 400);
 
   if (!(await rateLimit(env, 'newreq:user:' + user.id, 10, 86400))) return json({ error: 'too_many_requests' }, 429);

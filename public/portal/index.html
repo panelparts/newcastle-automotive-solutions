@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Customer Portal — Newcastle Automotive Solutions</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@600;700;800&family=Public+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root{
+    color-scheme: light dark;
+    --ink:#151a22; --ink-soft:#525c6b; --ink-faint:#8590a0;
+    --paper:#f2f4f7; --surface:#ffffff; --surface-2:#e9edf2;
+    --border:#d9dfe6; --accent:#ff6a1a; --accent-ink:#ffffff; --accent-soft:#ffe4d3;
+    --ok:#1f8f5a; --ok-soft:#d9f2e5; --warn:#c8790f; --warn-soft:#fbe9cf;
+    --info:#2f6fed; --info-soft:#e4ecfd; --danger:#d43d3d; --danger-soft:#fbe1e1; --muted-soft:#eef1f5;
+    --shadow:0 1px 2px rgba(20,25,35,.07), 0 1px 1px rgba(20,25,35,.05);
+    --font-body:'Public Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-display:'Big Shoulders', 'Arial Narrow', sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --ink:#eef1f6; --ink-soft:#a7b0bd; --ink-faint:#77808f;
+      --paper:#10141b; --surface:#171d27; --surface-2:#1e2531;
+      --border:#2b3342; --accent:#ff7a33; --accent-ink:#161116; --accent-soft:#3a2216;
+      --ok:#3fbb84; --ok-soft:#123425; --warn:#e5a13c; --warn-soft:#332510;
+      --info:#5b8dfd; --info-soft:#182642; --danger:#f16464; --danger-soft:#3a1a1a; --muted-soft:#1c2431;
+      --shadow:0 1px 2px rgba(0,0,0,.4);
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font:15px/1.45 var(--font-body);background:var(--paper);color:var(--ink);-webkit-text-size-adjust:100%;min-height:100vh}
+  [hidden]{display:none!important}
+  h1,h2,h3{margin:0;font-family:var(--font-display);letter-spacing:.2px}
+  button,input,select,textarea{font:inherit;color:inherit}
+  a{color:var(--accent)}
+  .wrap{max-width:640px;margin:0 auto;padding:0 16px calc(40px + env(safe-area-inset-bottom))}
+  .topbar{background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
+  .topbar-in{max-width:640px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:12px}
+  .topbar img{height:34px;width:auto;border-radius:4px}
+  .topbar .who{margin-left:auto;text-align:right;font-size:13px;color:var(--ink-soft);line-height:1.25;min-width:0}
+  .topbar .who b{color:var(--ink);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46vw}
+  .nav{display:flex;gap:6px;margin:14px 0 4px}
+  .nav button{flex:1;border:1px solid var(--border);background:var(--surface);border-radius:10px;padding:10px 6px;font-weight:600;color:var(--ink-soft);cursor:pointer}
+  .nav button.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:var(--shadow);margin:12px 0}
+  .card.narrow{max-width:420px;margin:28px auto}
+  .center{text-align:center}
+  .muted{color:var(--ink-soft)}
+  .small{font-size:13px}
+  .tiny{font-size:12px;color:var(--ink-faint)}
+  h1{font-size:30px;font-weight:800}
+  h2{font-size:24px;font-weight:700}
+  h3{font-size:19px;font-weight:700}
+  .sec{margin:22px 0 6px;display:flex;align-items:baseline;justify-content:space-between}
+  label{display:block;font-size:13px;font-weight:600;color:var(--ink-soft);margin:0 0 5px}
+  .field{margin:0 0 14px}
+  input[type=text],input[type=email],input[type=password],input[type=tel],input[type=date],select,textarea{
+    width:100%;border:1px solid var(--border);border-radius:10px;padding:11px 12px;background:var(--surface);font-size:16px;appearance:none;-webkit-appearance:none}
+  select{background-image:linear-gradient(45deg,transparent 50%,var(--ink-faint) 50%),linear-gradient(135deg,var(--ink-faint) 50%,transparent 50%);background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;background-size:5px 5px;background-repeat:no-repeat;padding-right:32px}
+  textarea{min-height:110px;resize:vertical}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media (max-width:420px){.row2.stack{grid-template-columns:1fr}}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--border);background:var(--surface);color:var(--ink);padding:11px 16px;border-radius:10px;font-weight:700;cursor:pointer;text-decoration:none}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .btn.block{display:flex;width:100%}
+  .btn.danger{color:var(--danger);border-color:var(--danger)}
+  .btn.small{padding:7px 12px;font-size:14px}
+  .btn:disabled{opacity:.55;cursor:default}
+  .err{color:var(--danger);font-size:13px;margin:5px 0 0}
+  .banner{border-radius:10px;padding:11px 13px;font-size:14px;margin:0 0 14px}
+  .banner.err{background:var(--danger-soft);color:var(--danger)}
+  .banner.ok{background:var(--ok-soft);color:var(--ok)}
+  .banner.info{background:var(--info-soft);color:var(--info)}
+  .types{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  @media (max-width:420px){.types{grid-template-columns:1fr}}
+  .type{border:2px solid var(--border);border-radius:12px;padding:11px 10px;cursor:pointer;background:var(--surface);text-align:left}
+  .type b{display:block}
+  .type span{font-size:12px;color:var(--ink-soft)}
+  .type.on{border-color:var(--accent);background:var(--accent-soft)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+  .chip{border:1px solid var(--border);background:var(--surface);border-radius:999px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer}
+  .chip.on{background:var(--accent-soft);border-color:var(--accent)}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+  .pill{display:inline-block;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;white-space:nowrap}
+  .pill.pending{background:var(--warn-soft);color:var(--warn)}
+  .pill.approved{background:var(--ok-soft);color:var(--ok)}
+  .pill.changed{background:var(--info-soft);color:var(--info)}
+  .pill.declined{background:var(--danger-soft);color:var(--danger)}
+  .pill.cancelled{background:var(--muted-soft);color:var(--ink-soft)}
+  .rq-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+  .rq-title{font-weight:700;font-size:16px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:10px 0 0;font-size:14px}
+  .kv dt{color:var(--ink-soft)} .kv dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+  .note{background:var(--muted-soft);border-radius:10px;padding:10px 12px;margin:10px 0 0;font-size:14px;overflow-wrap:anywhere}
+  .thumbs{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0}
+  .thumb{position:relative;width:72px;height:72px;border-radius:10px;overflow:hidden;border:1px solid var(--border);background:var(--surface-2)}
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .thumb button{position:absolute;top:2px;right:2px;width:22px;height:22px;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;font-size:14px;line-height:1;cursor:pointer;padding:0}
+  .thumb.busy::after{content:'';position:absolute;inset:0;background:rgba(255,255,255,.55)}
+  .addphoto{width:72px;height:72px;border-radius:10px;border:2px dashed var(--border);background:transparent;color:var(--ink-soft);font-size:26px;cursor:pointer}
+  .empty{text-align:center;color:var(--ink-soft);padding:22px 10px}
+  .booking{display:flex;gap:12px;align-items:center}
+  .date-tile{flex:none;width:56px;text-align:center;border-radius:10px;background:var(--accent-soft);padding:6px 0}
+  .date-tile .d{font:800 24px/1 var(--font-display)} .date-tile .m{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+  .spin{width:34px;height:34px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;margin:70px auto}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:50;max-width:90vw}
+  .toast.show{opacity:1}
+  .link{background:none;border:0;padding:0;color:var(--accent);font-weight:600;cursor:pointer;text-decoration:underline}
+</style>
+</head>
+<body>
+<div id="app"><div class="spin" aria-label="Loading"></div></div>
+<div id="toast" class="toast" role="status"></div>
+
+<script>
+(function(){
+'use strict';
+
+var JOB_HELP = {
+  mechanical: 'Servicing, brakes, suspension, repairs',
+  adas: 'Camera / radar calibration',
+  both: 'Repair plus calibration'
+};
+var state = {
+  me: null,             // /api/portal/me payload when signed in
+  view: 'home',         // home | new | account | done
+  auth: 'login',        // login | forgot | forgot-sent | token
+  token: null, tokenInfo: null,
+  form: null,           // in-progress new-request form (kept across re-renders)
+  lastRef: null,
+  busy: false,
+  confirmCancel: null
+};
+var pollTimer = null;
+
+/* ---------------- helpers ---------------- */
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function $(sel, root){ return (root||document).querySelector(sel); }
+function toast(msg){
+  var t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(function(){ t.classList.remove('show'); }, 3200);
+}
+function fmtDate(iso){
+  var d = new Date(iso+'T00:00:00');
+  return d.toLocaleDateString('en-AU',{weekday:'short', day:'numeric', month:'short', year:'numeric'});
+}
+function fmtTime(t){
+  if(!t) return '';
+  var h = Number(t.slice(0,2)), m = t.slice(3,5);
+  return ((h%12)||12)+':'+m+(h>=12?' pm':' am');
+}
+function jobLabel(id){
+  var j = (state.me && state.me.jobTypes || []).filter(function(x){return x.id===id;})[0];
+  return j ? j.label : id;
+}
+function vehText(v){ return [v && v.rego, v && v.makeModel].filter(Boolean).join(' — '); }
+function api(method, path, body, opts){
+  opts = opts || {};
+  var init = { method:method, credentials:'same-origin', headers:{} };
+  if(body !== undefined){
+    if(opts.raw){ init.body = body; init.headers['Content-Type'] = opts.contentType; }
+    else { init.body = JSON.stringify(body); init.headers['Content-Type'] = 'application/json'; }
+  }
+  return fetch('/api/portal'+path, init).then(function(r){
+    return r.json().catch(function(){ return {}; }).then(function(data){ return {status:r.status, ok:r.ok, data:data}; });
+  });
+}
+function netErr(){ toast('Could not reach the server — check your connection.'); }
+
+/* ---------------- boot ---------------- */
+function boot(){
+  var m = /[#&]t=([0-9a-f]{64})/.exec(location.hash || '');
+  if(m){
+    state.token = m[1];
+    // Take the one-time token out of the address bar straight away.
+    try{ history.replaceState(null, '', location.pathname); }catch(e){}
+    api('POST','/token-info',{token:state.token}).then(function(r){
+      if(r.ok){ state.tokenInfo = r.data; state.auth = 'token'; }
+      else { state.auth = 'login'; state.flash = {kind:'err', text:'That link has expired or has already been used. Request a new one below, or ask us to re-send your invite.'}; state.token = null; }
+      renderAuth();
+    }).catch(function(){ renderAuth(); });
+    return;
+  }
+  loadMe();
+}
+function loadMe(silent){
+  return api('GET','/me').then(function(r){
+    if(r.status===401){
+      var wasIn = !!state.me;
+      state.me = null; stopPolling();
+      if(wasIn) state.flash = {kind:'err', text:'You have been signed out. Please sign in again.'};
+      renderAuth(); return;
+    }
+    if(!r.ok) throw new Error('bad');
+    var first = !state.me;
+    state.me = r.data;
+    if(first){ renderApp(); startPolling(); }
+    else if(state.view==='home') renderHomeLists();
+  }).catch(function(){ if(!state.me && !silent) renderAuth(); });
+}
+function startPolling(){
+  stopPolling();
+  pollTimer = setInterval(function(){ if(!document.hidden) loadMe(true); }, 30000);
+}
+function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+document.addEventListener('visibilitychange', function(){ if(!document.hidden && state.me) loadMe(true); });
+
+/* ---------------- auth screens ---------------- */
+function logoBlock(){
+  return '<div class="center" style="margin-bottom:14px"><img src="logo.png" alt="Newcastle Automotive Solutions" style="height:54px;width:auto;border-radius:6px"></div>';
+}
+function renderAuth(){
+  var html = '<div id="auth-root" class="wrap">';
+  var flash = state.flash ? '<div class="banner '+(state.flash.kind==='err'?'err':'ok')+'">'+esc(state.flash.text)+'</div>' : '';
+  state.flash = null;
+  if(state.auth==='token' && state.tokenInfo){
+    var isInvite = state.tokenInfo.kind==='invite';
+    html += '<div class="card narrow">'+logoBlock()+
+      '<h2>'+(isInvite?'Create your password':'Choose a new password')+'</h2>'+
+      '<p class="muted small" style="margin:6px 0 16px">'+(isInvite?'Welcome, '+esc(state.tokenInfo.name)+'. This sets up your portal login for '+esc(state.tokenInfo.customerName)+'.':'For '+esc(state.tokenInfo.email)+'.')+'</p>'+
+      '<form id="pw-form" autocomplete="on">'+
+        '<input type="email" name="username" value="'+esc(state.tokenInfo.email)+'" autocomplete="username" hidden>'+
+        '<div class="field"><label for="pw1">New password</label><input id="pw1" type="password" name="password" minlength="10" required autocomplete="new-password"><div class="tiny" style="margin-top:4px">At least 10 characters.</div></div>'+
+        '<div class="field"><label for="pw2">Repeat password</label><input id="pw2" type="password" name="password2" minlength="10" required autocomplete="new-password"></div>'+
+        '<div id="auth-err" class="err" hidden></div>'+
+        '<button class="btn primary block" type="submit" style="margin-top:10px">'+(isInvite?'Create password &amp; sign in':'Save password &amp; sign in')+'</button>'+
+      '</form></div>';
+  } else if(state.auth==='forgot'){
+    html += '<div class="card narrow">'+logoBlock()+'<h2>Reset your password</h2>'+
+      '<p class="muted small" style="margin:6px 0 16px">Enter your login email and we will send you a link to choose a new password.</p>'+
+      '<form id="forgot-form"><div class="field"><label for="fe">Email</label><input id="fe" type="email" name="email" required autocomplete="username"></div>'+
+      '<div id="auth-err" class="err" hidden></div>'+
+      '<button class="btn primary block" type="submit">Send reset link</button></form>'+
+      '<p class="center small" style="margin:16px 0 0"><button class="link" data-action="to-login">Back to sign in</button></p></div>';
+  } else if(state.auth==='forgot-sent'){
+    html += '<div class="card narrow">'+logoBlock()+'<h2>Check your email</h2>'+
+      '<p class="muted" style="margin:8px 0 16px">If that email has a portal login, a reset link is on its way. It works once and expires in 2 hours.</p>'+
+      '<p class="center small"><button class="link" data-action="to-login">Back to sign in</button></p></div>';
+  } else {
+    html += '<div class="card narrow">'+logoBlock()+'<h2>Customer portal</h2>'+
+      '<p class="muted small" style="margin:6px 0 16px">Sign in to request a job, choose a preferred date and time, and follow its progress.</p>'+flash+
+      '<form id="login-form"><div class="field"><label for="le">Email</label><input id="le" type="email" name="email" required autocomplete="username" autocapitalize="off"></div>'+
+      '<div class="field"><label for="lp">Password</label><input id="lp" type="password" name="password" required autocomplete="current-password"></div>'+
+      '<div id="auth-err" class="err" hidden></div>'+
+      '<button class="btn primary block" type="submit" style="margin-top:6px">Sign in</button></form>'+
+      '<p class="center small" style="margin:16px 0 4px"><button class="link" data-action="to-forgot">Forgot your password?</button></p>'+
+      '<p class="center tiny" style="margin:10px 0 0">New here? Logins are set up by invitation — ask us and we will email you a link.</p></div>';
+  }
+  html += '</div>';
+  $('#app').innerHTML = html;
+  var f;
+  if((f=$('#login-form'))) f.addEventListener('submit', onLogin);
+  if((f=$('#forgot-form'))) f.addEventListener('submit', onForgot);
+  if((f=$('#pw-form'))) f.addEventListener('submit', onSetPassword);
+}
+function showAuthErr(msg){ var e=$('#auth-err'); if(e){ e.textContent=msg; e.hidden=false; } }
+function lockBtn(form, on, label){
+  var b = $('button[type=submit]', form);
+  if(b){ b.disabled = on; if(label) b.dataset.label = b.dataset.label || b.innerHTML; b.innerHTML = on ? (label||'Please wait…') : (b.dataset.label||b.innerHTML); }
+}
+function onLogin(e){
+  e.preventDefault();
+  var form = e.target, fd = new FormData(form);
+  lockBtn(form, true, 'Signing in…');
+  api('POST','/login',{email:fd.get('email'), password:fd.get('password')}).then(function(r){
+    if(r.ok){ state.me = null; return loadMe(); }
+    lockBtn(form,false);
+    showAuthErr(r.status===429 ? 'Too many attempts. Please wait 15 minutes and try again.' : 'Incorrect email or password.');
+  }).catch(function(){ lockBtn(form,false); showAuthErr('Could not reach the server — check your connection.'); });
+}
+function onForgot(e){
+  e.preventDefault();
+  var form = e.target, fd = new FormData(form);
+  lockBtn(form, true, 'Sending…');
+  api('POST','/forgot',{email:fd.get('email')}).then(function(){
+    state.auth = 'forgot-sent'; renderAuth();
+  }).catch(function(){ lockBtn(form,false); showAuthErr('Could not reach the server — check your connection.'); });
+}
+function onSetPassword(e){
+  e.preventDefault();
+  var form = e.target, fd = new FormData(form);
+  if(fd.get('password') !== fd.get('password2')){ showAuthErr('The two passwords do not match.'); return; }
+  lockBtn(form, true, 'Saving…');
+  api('POST','/set-password',{token:state.token, password:fd.get('password')}).then(function(r){
+    if(r.ok){ state.token = null; state.tokenInfo = null; state.auth = 'login'; state.me = null; return loadMe(); }
+    lockBtn(form,false);
+    showAuthErr(r.data && r.data.message ? r.data.message : (r.data && r.data.error==='invalid_or_expired' ? 'This link has expired or was already used. Request a new one from the sign-in page.' : 'Could not save that password.'));
+  }).catch(function(){ lockBtn(form,false); showAuthErr('Could not reach the server — check your connection.'); });
+}
+
+/* ---------------- signed-in shell ---------------- */
+function renderApp(){
+  var me = state.me;
+  var navBtn = function(id,label){ return '<button data-action="nav" data-view="'+id+'" class="'+((state.view===id||(id==='home'&&state.view==='done'))?'on':'')+'">'+label+'</button>'; };
+  $('#app').innerHTML =
+    '<div class="topbar"><div class="topbar-in"><img src="logo.png" alt="">'+
+      '<div class="who"><b>'+esc(me.customer ? me.customer.name : me.user.name)+'</b>'+((me.customer && me.customer.name!==me.user.name) ? esc(me.user.name) : '')+'</div></div></div>'+
+    '<div class="wrap" id="wrap">'+
+      '<div class="nav">'+navBtn('home','My jobs')+navBtn('new','New request')+navBtn('account','Account')+'</div>'+
+      '<div id="view"></div>'+
+    '</div>';
+  renderView();
+}
+function renderView(){
+  var v = $('#view'); if(!v) return;
+  if(state.view==='new') v.innerHTML = newFormHTML();
+  else if(state.view==='account') v.innerHTML = accountHTML();
+  else if(state.view==='done') v.innerHTML = doneHTML();
+  else { v.innerHTML = homeHTML(); }
+  var navs = document.querySelectorAll('.nav button');
+  Array.prototype.forEach.call(navs, function(b){
+    var id = b.dataset.view;
+    b.classList.toggle('on', state.view===id || (id==='home' && state.view==='done'));
+  });
+  if(state.view==='new') wireNewForm();
+  if(state.view==='account'){ var f=$('#pwchange-form'); if(f) f.addEventListener('submit', onChangePassword); }
+}
+function renderHomeLists(){
+  var el = $('#home-lists'); if(el) el.innerHTML = homeListsHTML();
+}
+
+/* ---------------- home ---------------- */
+function homeHTML(){
+  return '<div class="sec"><h2>My jobs</h2></div>'+
+    '<button class="btn primary block" data-action="nav" data-view="new">+ Request a job</button>'+
+    '<div id="home-lists">'+homeListsHTML()+'</div>';
+}
+function homeListsHTML(){
+  var me = state.me, html = '';
+  var upcoming = me.bookings;
+  html += '<div class="sec"><h3>Upcoming bookings</h3></div>';
+  if(!upcoming.length) html += '<div class="card empty">Nothing booked in yet.</div>';
+  else html += upcoming.map(function(b){
+    var d = new Date(b.date+'T00:00:00');
+    return '<div class="card booking"><div class="date-tile"><div class="d">'+d.getDate()+'</div><div class="m">'+d.toLocaleDateString('en-AU',{month:'short'})+'</div></div>'+
+      '<div style="min-width:0"><div class="rq-title">'+esc(fmtDate(b.date))+' · '+esc(fmtTime(b.start))+'–'+esc(fmtTime(b.end))+'</div>'+
+      '<div class="small muted">'+esc(jobLabel(b.jobType))+' · '+esc(vehText(b.vehicle))+'</div>'+
+      '<div class="small muted">'+esc(b.address||'')+(b.staffFirstName?' · '+esc(b.staffFirstName):'')+'</div></div></div>';
+  }).join('');
+  html += '<div class="sec"><h3>My requests</h3></div>';
+  if(!me.requests.length) html += '<div class="card empty">You have not made any requests yet.</div>';
+  else html += me.requests.map(requestCardHTML).join('');
+  return html;
+}
+function statusPill(r){
+  if(r.status==='pending') return '<span class="pill pending">Waiting for review</span>';
+  if(r.status==='approved') return r.adjusted ? '<span class="pill changed">Confirmed — new time</span>' : '<span class="pill approved">Confirmed</span>';
+  if(r.status==='declined') return '<span class="pill declined">Not booked</span>';
+  return '<span class="pill cancelled">Cancelled</span>';
+}
+function requestCardHTML(r){
+  var rows = '';
+  if(r.status==='approved'){
+    rows += '<dt>Confirmed</dt><dd>'+esc(fmtDate(r.approvedDate))+', '+esc(fmtTime(r.approvedStart))+'–'+esc(fmtTime(r.approvedEnd))+(r.staffFirstName?' · '+esc(r.staffFirstName):'')+'</dd>';
+    if(r.adjusted) rows += '<dt>You asked for</dt><dd>'+esc(fmtDate(r.preferredDate))+', '+esc(fmtTime(r.preferredStart))+'</dd>';
+  } else {
+    rows += '<dt>Preferred</dt><dd>'+esc(fmtDate(r.preferredDate))+', '+esc(fmtTime(r.preferredStart))+(r.flexible?' (flexible)':'')+'</dd>';
+  }
+  rows += '<dt>Where</dt><dd>'+esc(r.address)+'</dd>';
+  if(r.reference) rows += '<dt>Your ref</dt><dd>'+esc(r.reference)+'</dd>';
+  var thumbs = r.photos.length ? '<div class="thumbs">'+r.photos.map(function(p){ return '<div class="thumb"><img loading="lazy" alt="Photo" src="'+esc(p.url)+'"></div>'; }).join('')+'</div>' : '';
+  var msg = r.staffMessage && r.status!=='pending' ? '<div class="note"><b>From us:</b><br>'+esc(r.staffMessage).replace(/\n/g,'<br>')+'</div>' : '';
+  var actions = '';
+  if(r.status==='pending'){
+    actions = state.confirmCancel===r.id
+      ? '<div class="note" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span>Cancel this request?</span><button class="btn small danger" data-action="cancel-yes" data-id="'+esc(r.id)+'">Yes, cancel it</button><button class="btn small" data-action="cancel-no">Keep it</button></div>'
+      : '<div style="margin-top:12px"><button class="btn small" data-action="cancel-ask" data-id="'+esc(r.id)+'">Cancel request</button></div>';
+  }
+  return '<div class="card"><div class="rq-head"><div><div class="rq-title">'+esc(jobLabel(r.jobType))+'</div><div class="small muted">'+esc(vehText(r.vehicle))+'</div></div>'+statusPill(r)+'</div>'+
+    '<dl class="kv">'+rows+'</dl>'+
+    '<div class="note" style="margin-top:10px">'+esc(r.description).replace(/\n/g,'<br>')+'</div>'+thumbs+msg+actions+
+    '<div class="tiny" style="margin-top:10px">Request '+esc(r.ref)+' · sent '+esc(new Date(r.createdAt).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}))+'</div></div>';
+}
+
+/* ---------------- new request ---------------- */
+function timeOptions(sel){
+  var out = '';
+  for(var h=6; h<=17; h++){
+    ['00','30'].forEach(function(m){
+      var t = (h<10?'0':'')+h+':'+m;
+      out += '<option value="'+t+'"'+(sel===t?' selected':'')+'>'+fmtTime(t)+'</option>';
+    });
+  }
+  return out;
+}
+function freshForm(){
+  var me = state.me, c = me.customer || {};
+  return {
+    jobType:'', rego:'', makeModel:'', address:c.address||'', contactPhone:c.phone||'', reference:'', description:'',
+    preferredDate:'', preferredStart:'09:00', flexible:false,
+    photos:[],   // {key, blobUrl, id (server id once uploaded), busy, failed}
+    errors:{}
+  };
+}
+function newFormHTML(){
+  if(!state.form) state.form = freshForm();
+  var f = state.form, me = state.me, errs = f.errors || {};
+  var E = function(k){ return errs[k] ? '<div class="err">'+esc(errs[k])+'</div>' : ''; };
+  var vehicles = (me.customer && me.customer.vehicles) || [];
+  var chips = vehicles.length ? '<div class="chips">'+vehicles.map(function(v,i){
+    var on = f.rego && f.rego.toUpperCase()===String(v.rego).toUpperCase();
+    return '<button type="button" class="chip'+(on?' on':'')+'" data-action="pick-vehicle" data-i="'+i+'">'+esc(v.rego)+(v.makeModel?' · '+esc(v.makeModel):'')+'</button>';
+  }).join('')+'</div>' : '';
+  var types = (me.jobTypes||[]).map(function(j){
+    return '<button type="button" class="type'+(f.jobType===j.id?' on':'')+'" data-action="pick-type" data-id="'+j.id+'"><b>'+esc(j.label)+'</b><span>'+esc(JOB_HELP[j.id]||'')+'</span></button>';
+  }).join('');
+  return '<div class="sec"><h2>Request a job</h2></div>'+
+    '<p class="muted small" style="margin:0 0 4px">Tell us what you need and when suits you. We will review it and email you to confirm — we may adjust the time if we cannot fit your first choice.</p>'+
+    '<form id="req-form" novalidate>'+
+    '<div class="card"><div class="field" style="margin:0"><label>What do you need?</label><div class="types">'+types+'</div>'+E('jobType')+'</div></div>'+
+    '<div class="card"><label>Vehicle</label>'+chips+
+      '<div class="row2 stack"><div class="field"><label for="f-rego">Registration</label><input id="f-rego" type="text" name="rego" value="'+esc(f.rego)+'" maxlength="12" autocapitalize="characters" autocomplete="off">'+E('rego')+'</div>'+
+      '<div class="field"><label for="f-mm">Make &amp; model</label><input id="f-mm" type="text" name="makeModel" value="'+esc(f.makeModel)+'" maxlength="80" placeholder="e.g. Toyota Hilux SR5">'+E('makeModel')+'</div></div>'+
+      '<div class="field" style="margin:0"><label for="f-desc">What is needed?</label><textarea id="f-desc" name="description" maxlength="2000" placeholder="e.g. Windscreen replaced — forward camera needs calibrating. Dash warning light is on.">'+esc(f.description)+'</textarea>'+E('description')+'</div></div>'+
+    '<div class="card"><div class="field"><label for="f-date">Preferred date</label><input id="f-date" type="date" name="preferredDate" value="'+esc(f.preferredDate)+'" min="'+esc(me.today)+'">'+E('preferredDate')+'</div>'+
+      '<div class="field"><label for="f-time">Preferred start time</label><select id="f-time" name="preferredStart">'+timeOptions(f.preferredStart)+'</select>'+E('preferredStart')+'</div>'+
+      '<label style="display:flex;gap:10px;align-items:flex-start;font-weight:500;color:var(--ink);margin:0"><input type="checkbox" name="flexible" '+(f.flexible?'checked':'')+' style="margin-top:3px;width:18px;height:18px;flex:none"> <span>I am flexible — happy for you to suggest a different time if needed.</span></label></div>'+
+    '<div class="card"><div class="field"><label for="f-addr">Where will the vehicle be?</label><input id="f-addr" type="text" name="address" value="'+esc(f.address)+'" maxlength="200" autocomplete="street-address">'+E('address')+'</div>'+
+      '<div class="row2 stack"><div class="field" style="margin:0"><label for="f-phone">Contact phone</label><input id="f-phone" type="tel" name="contactPhone" value="'+esc(f.contactPhone)+'" maxlength="30" autocomplete="tel"></div>'+
+      '<div class="field" style="margin:0"><label for="f-ref">Your PO / job number <span class="tiny">(optional)</span></label><input id="f-ref" type="text" name="reference" value="'+esc(f.reference)+'" maxlength="60" autocomplete="off"></div></div></div>'+
+    '<div class="card"><label>Photos <span class="tiny">(optional, up to 6 — e.g. dash lights, damage, windscreen)</span></label><div class="thumbs" id="photos-block">'+photosBlockHTML()+'</div>'+E('photos')+
+      '<input id="photo-input" type="file" accept="image/*" multiple hidden></div>'+
+    '<div id="form-err"></div>'+
+    '<button class="btn primary block" type="submit" id="req-submit">Send request</button>'+
+    '</form>';
+}
+function photosBlockHTML(){
+  var f = state.form; if(!f) return '';
+  var thumbs = f.photos.map(function(p,i){
+    return '<div class="thumb'+(p.busy?' busy':'')+'">'+(p.blobUrl?'<img alt="" src="'+esc(p.blobUrl)+'">':'')+'<button type="button" data-action="rm-photo" data-i="'+i+'" aria-label="Remove photo">×</button></div>';
+  }).join('');
+  var addBtn = f.photos.length<6 ? '<button type="button" class="addphoto" data-action="add-photo" aria-label="Add photo">+</button>' : '';
+  return thumbs + addBtn;
+}
+function readFormFields(){
+  var form = $('#req-form'); if(!form || !state.form) return;
+  var fd = new FormData(form), f = state.form;
+  f.rego = String(fd.get('rego')||''); f.makeModel = String(fd.get('makeModel')||'');
+  f.description = String(fd.get('description')||''); f.preferredDate = String(fd.get('preferredDate')||'');
+  f.preferredStart = String(fd.get('preferredStart')||'09:00'); f.flexible = fd.get('flexible')==='on';
+  f.address = String(fd.get('address')||''); f.contactPhone = String(fd.get('contactPhone')||''); f.reference = String(fd.get('reference')||'');
+}
+function wireNewForm(){
+  var form = $('#req-form'); if(!form) return;
+  form.addEventListener('submit', onSubmitRequest);
+  // Clear a field's error message as soon as the customer starts fixing it.
+  var ERR_KEY = {rego:'rego', makeModel:'makeModel', description:'description', preferredDate:'preferredDate', preferredStart:'preferredStart', address:'address'};
+  var clearErr = function(e){
+    var key = ERR_KEY[e.target && e.target.name];
+    if(!key || !state.form || !state.form.errors || !state.form.errors[key]) return;
+    delete state.form.errors[key];
+    var holder = e.target.closest('.field') || e.target.parentNode;
+    var msg = holder && holder.querySelector('.err'); if(msg) msg.remove();
+  };
+  form.addEventListener('input', clearErr);
+  form.addEventListener('change', clearErr);
+  var pi = $('#photo-input');
+  if(pi) pi.addEventListener('change', function(){ addPhotos(pi.files); pi.value=''; });
+}
+function validateForm(f){
+  var e = {};
+  if(!f.jobType) e.jobType = 'Choose a job type.';
+  if(!f.rego.trim()) e.rego = 'Enter the registration.';
+  if(!f.makeModel.trim()) e.makeModel = 'Enter the make and model.';
+  if(f.description.trim().length<5) e.description = 'Tell us a little about the job.';
+  if(!f.preferredDate) e.preferredDate = 'Pick a date.';
+  else if(f.preferredDate < state.me.today) e.preferredDate = 'Pick a date that is today or later.';
+  if(!f.address.trim()) e.address = 'Enter where the vehicle will be.';
+  return e;
+}
+function onSubmitRequest(e){
+  e.preventDefault();
+  if(state.busy) return;
+  readFormFields();
+  var f = state.form;
+  f.errors = validateForm(f);
+  if(Object.keys(f.errors).length){
+    renderView();
+    var first = document.querySelector('.err'); if(first && first.scrollIntoView) first.scrollIntoView({block:'center', behavior:'smooth'});
+    return;
+  }
+  if(f.photos.some(function(p){ return p.busy; })){ toast('Photos are still uploading — one moment.'); return; }
+  if(f.photos.some(function(p){ return p.failed; })){ toast('A photo failed to upload — remove it or try again.'); return; }
+  state.busy = true;
+  var btn = $('#req-submit'); btn.disabled = true; btn.textContent = 'Sending…';
+  api('POST','/requests',{
+    jobType:f.jobType, vehicle:{rego:f.rego, makeModel:f.makeModel}, address:f.address, contactPhone:f.contactPhone,
+    reference:f.reference, description:f.description, preferredDate:f.preferredDate, preferredStart:f.preferredStart,
+    flexible:f.flexible, photoIds:f.photos.map(function(p){ return p.id; })
+  }).then(function(r){
+    state.busy = false;
+    if(r.ok){
+      state.lastRef = r.data.request.ref;
+      state.me.requests.unshift(r.data.request);
+      f.photos.forEach(function(p){ try{ URL.revokeObjectURL(p.blobUrl); }catch(e){} });
+      state.form = null; state.view = 'done';
+      loadMe(true); renderApp(); window.scrollTo(0,0);
+      return;
+    }
+    if(r.data && r.data.fields){ f.errors = r.data.fields; renderView(); return; }
+    btn.disabled = false; btn.textContent = 'Send request';
+    var msg = r.status===429 ? 'You have sent a lot of requests — please wait or call us.' : 'Something went wrong sending that. Please try again.';
+    $('#form-err').innerHTML = '<div class="banner err">'+esc(msg)+'</div>';
+  }).catch(function(){ state.busy = false; btn.disabled = false; btn.textContent = 'Send request'; netErr(); });
+}
+function doneHTML(){
+  var c = state.me.company || {};
+  return '<div class="card center" style="margin-top:22px"><div style="font-size:42px">✅</div><h2 style="margin:6px 0">Request sent</h2>'+
+    '<p class="muted" style="margin:8px 0 4px">Reference <b class="mono">'+esc(state.lastRef||'')+'</b></p>'+
+    '<p class="muted small">We will review it and email you to confirm the booking. If we need to change the time, the email will show the new time.'+(c.phone?' Need it sooner? Call '+esc(c.phone)+'.':'')+'</p>'+
+    '<button class="btn primary block" data-action="nav" data-view="home" style="margin-top:14px">Back to my jobs</button></div>';
+}
+
+/* photos: shrink on the phone first, upload straight away */
+function resizeToJpeg(file, maxDim, quality){
+  return new Promise(function(resolve, reject){
+    var url = URL.createObjectURL(file), img = new Image();
+    img.onload = function(){
+      var w = img.naturalWidth, h = img.naturalHeight, s = Math.min(1, maxDim/Math.max(w,h));
+      var c = document.createElement('canvas'); c.width = Math.round(w*s); c.height = Math.round(h*s);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob(function(b){ b ? resolve(b) : reject(new Error('toBlob failed')); }, 'image/jpeg', quality);
+    };
+    img.onerror = function(){ URL.revokeObjectURL(url); reject(new Error('not an image')); };
+    img.src = url;
+  });
+}
+function addPhotos(fileList){
+  var f = state.form; if(!f) return;
+  var files = Array.prototype.filter.call(fileList, function(x){ return x.type && x.type.indexOf('image/')===0; });
+  if(!files.length){ toast('Please choose a photo.'); return; }
+  readFormFields();
+  var room = 6 - f.photos.length;
+  if(files.length>room){ toast('Up to 6 photos.'); files = files.slice(0,room); }
+  files.forEach(function(file){
+    var p = {key:Math.random().toString(36).slice(2), blobUrl:'', id:null, busy:true, failed:false};
+    f.photos.push(p);
+    resizeToJpeg(file, 1600, 0.82).then(function(blob){
+      p.blobUrl = URL.createObjectURL(blob); renderPhotosOnly();
+      return api('POST','/photos',blob,{raw:true, contentType:'image/jpeg'});
+    }).then(function(r){
+      if(r.ok){ p.id = r.data.id; p.busy = false; }
+      else { p.busy = false; p.failed = true; toast(r.status===413 ? 'That photo is too large.' : 'A photo could not be uploaded.'); f.photos = f.photos.filter(function(x){return x!==p;}); }
+      renderPhotosOnly();
+    }).catch(function(){
+      f.photos = f.photos.filter(function(x){return x!==p;}); toast('Could not read that photo.'); renderPhotosOnly();
+    });
+  });
+  renderPhotosOnly();
+}
+function renderPhotosOnly(){
+  // Only the thumbnails are redrawn, so anything being typed keeps its focus.
+  if(state.view!=='new' || !state.form) return;
+  var b = $('#photos-block'); if(b) b.innerHTML = photosBlockHTML();
+}
+
+/* ---------------- account ---------------- */
+function accountHTML(){
+  var me = state.me, c = me.company || {};
+  return '<div class="sec"><h2>Account</h2></div>'+
+    '<div class="card"><dl class="kv" style="margin:0"><dt>Name</dt><dd>'+esc(me.user.name)+'</dd><dt>Login email</dt><dd>'+esc(me.user.email)+'</dd>'+(me.customer?'<dt>Customer</dt><dd>'+esc(me.customer.name)+'</dd>':'')+'</dl></div>'+
+    '<div class="card"><h3 style="margin-bottom:10px">Change password</h3><form id="pwchange-form"><input type="email" value="'+esc(me.user.email)+'" autocomplete="username" hidden>'+
+      '<div class="field"><label for="cp0">Current password</label><input id="cp0" type="password" name="current" required autocomplete="current-password"></div>'+
+      '<div class="field"><label for="cp1">New password <span class="tiny">(10+ characters)</span></label><input id="cp1" type="password" name="next" minlength="10" required autocomplete="new-password"></div>'+
+      '<div id="pw-msg"></div><button class="btn primary" type="submit">Update password</button></form></div>'+
+    '<div class="card"><h3 style="margin-bottom:6px">Need to change a booking?</h3><p class="muted small" style="margin:0">To change or cancel a confirmed booking, please contact us'+(c.phone?' on <a href="tel:'+esc(String(c.phone).replace(/[^+\d]/g,''))+'">'+esc(c.phone)+'</a>':'')+(c.email?' or <a href="mailto:'+esc(c.email)+'">'+esc(c.email)+'</a>':'')+'.</p></div>'+
+    '<button class="btn block" data-action="signout" style="margin-top:6px">Sign out</button>';
+}
+function onChangePassword(e){
+  e.preventDefault();
+  var form = e.target, fd = new FormData(form), msg = $('#pw-msg');
+  api('POST','/password',{currentPassword:fd.get('current'), newPassword:fd.get('next')}).then(function(r){
+    if(r.ok){ form.reset(); msg.innerHTML = '<div class="banner ok">Password updated.</div>'; }
+    else msg.innerHTML = '<div class="banner err">'+esc(r.status===401?'Your current password is not correct.':(r.data&&r.data.message)||'Could not update the password.')+'</div>';
+  }).catch(function(){ msg.innerHTML = '<div class="banner err">Could not reach the server.</div>'; });
+}
+
+/* ---------------- events ---------------- */
+document.addEventListener('click', function(e){
+  var el = e.target.closest('[data-action]'); if(!el) return;
+  var a = el.dataset.action;
+  if(a==='to-forgot'){ state.auth='forgot'; renderAuth(); return; }
+  if(a==='to-login'){ state.auth='login'; renderAuth(); return; }
+  if(a==='nav'){
+    if(state.view==='new') readFormFields();
+    state.view = el.dataset.view; state.confirmCancel = null; renderApp(); window.scrollTo(0,0); return;
+  }
+  if(a==='signout'){
+    api('POST','/logout',{}).finally(function(){ state.me=null; state.form=null; state.view='home'; state.auth='login'; stopPolling(); renderAuth(); });
+    return;
+  }
+  if(a==='pick-type'){ readFormFields(); state.form.jobType = el.dataset.id; delete state.form.errors.jobType; renderView(); return; }
+  if(a==='pick-vehicle'){
+    readFormFields();
+    var v = state.me.customer.vehicles[Number(el.dataset.i)];
+    if(v){ state.form.rego = v.rego||''; state.form.makeModel = v.makeModel||''; delete state.form.errors.rego; delete state.form.errors.makeModel; }
+    renderView(); return;
+  }
+  if(a==='add-photo'){ var pi = $('#photo-input'); if(pi) pi.click(); return; }
+  if(a==='rm-photo'){
+    readFormFields();
+    var p = state.form.photos.splice(Number(el.dataset.i),1)[0];
+    if(p && p.blobUrl){ try{ URL.revokeObjectURL(p.blobUrl); }catch(err){} }
+    renderPhotosOnly(); return;
+  }
+  if(a==='cancel-ask'){ state.confirmCancel = el.dataset.id; renderHomeLists(); return; }
+  if(a==='cancel-no'){ state.confirmCancel = null; renderHomeLists(); return; }
+  if(a==='cancel-yes'){
+    var id = el.dataset.id; el.disabled = true;
+    api('POST','/requests/'+encodeURIComponent(id)+'/cancel',{}).then(function(r){
+      state.confirmCancel = null;
+      if(r.ok) toast('Request cancelled.');
+      else toast((r.data && r.data.message) || 'That request can no longer be cancelled here.');
+      loadMe(true);
+    }).catch(netErr);
+    return;
+  }
+});
+
+// An email link opened in a tab that already has the portal loaded only changes
+// the #fragment — pick that up too, instead of ignoring it.
+window.addEventListener('hashchange', function(){
+  if(/[#&]t=[0-9a-f]{64}/.test(location.hash||'')){ stopPolling(); state.me = null; boot(); }
+});
+
+boot();
+})();
+</script>
+</body>
+</html>

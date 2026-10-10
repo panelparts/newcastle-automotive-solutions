@@ -381,15 +381,50 @@ function requestCardHTML(r){
 }
 
 /* ---------------- new request ---------------- */
-function timeOptions(sel){
+function timeOptions(sel, blocked){
   var out = '';
+  blocked = blocked || [];
   for(var h=6; h<=17; h++){
     ['00','30'].forEach(function(m){
       var t = (h<10?'0':'')+h+':'+m;
-      out += '<option value="'+t+'"'+(sel===t?' selected':'')+'>'+fmtTime(t)+'</option>';
+      var taken = blocked.indexOf(t) !== -1;
+      out += '<option value="'+t+'"'+(sel===t && !taken?' selected':'')+(taken?' disabled':'')+'>'+fmtTime(t)+(taken?' — booked':'')+'</option>';
     });
   }
   return out;
+}
+// Times already taken, by date (2026-10-10: "blank out the times that are
+// already booked"). A time is taken when every technician is busy then; the
+// server sends back only the times, nothing about the other jobs.
+var availCache = {};
+function applyAvailability(){
+  var sel = $('#f-time'), dateEl = $('#f-date'), note = $('#time-note');
+  if(!sel || !dateEl) return;
+  var date = dateEl.value;
+  var blocked = availCache[date] || [];
+  var cur = sel.value;
+  sel.innerHTML = timeOptions(cur, blocked);
+  if(blocked.indexOf(cur) !== -1){
+    // Move to the next free time after the one that was taken (or the first free time of the day).
+    var frees = Array.prototype.filter.call(sel.options, function(o){ return !o.disabled; });
+    var nextFree = frees.filter(function(o){ return o.value > cur; })[0] || frees[0];
+    if(nextFree) sel.value = nextFree.value;
+  } else { sel.value = cur; }
+  var free = Array.prototype.filter.call(sel.options, function(o){ return !o.disabled; }).length;
+  if(note){
+    note.textContent = !date ? '' : (free===0 ? 'Fully booked on this date — please pick another day.' : (blocked.length ? 'Greyed-out times are already booked.' : ''));
+  }
+}
+function loadAvailability(){
+  var dateEl = $('#f-date'); if(!dateEl || !dateEl.value) { applyAvailability(); return; }
+  var date = dateEl.value;
+  if(availCache[date]){ applyAvailability(); return; }
+  api('GET','/availability?date='+encodeURIComponent(date)).then(function(r){
+    if(!r.ok) return;
+    availCache[date] = r.data.blocked || [];
+    var cur = $('#f-date');
+    if(cur && cur.value === date) applyAvailability();
+  }).catch(function(){});
 }
 function freshForm(){
   var me = state.me, c = me.customer || {};
@@ -421,7 +456,7 @@ function newFormHTML(){
       '<div class="field"><label for="f-mm">Make &amp; model</label><input id="f-mm" type="text" name="makeModel" value="'+esc(f.makeModel)+'" maxlength="80" placeholder="e.g. Toyota Hilux SR5">'+E('makeModel')+'</div></div>'+
       '<div class="field" style="margin:0"><label for="f-desc">What is needed?</label><textarea id="f-desc" name="description" maxlength="2000" placeholder="e.g. Windscreen replaced — forward camera needs calibrating. Dash warning light is on.">'+esc(f.description)+'</textarea>'+E('description')+'</div></div>'+
     '<div class="card"><div class="field"><label for="f-date">Preferred date</label><input id="f-date" type="date" name="preferredDate" value="'+esc(f.preferredDate)+'" min="'+esc(me.today)+'">'+E('preferredDate')+'</div>'+
-      '<div class="field"><label for="f-time">Preferred start time</label><select id="f-time" name="preferredStart">'+timeOptions(f.preferredStart)+'</select>'+E('preferredStart')+'</div>'+
+      '<div class="field"><label for="f-time">Preferred start time</label><select id="f-time" name="preferredStart">'+timeOptions(f.preferredStart, availCache[f.preferredDate])+'</select><div id="time-note" class="muted small" style="margin-top:4px"></div>'+E('preferredStart')+'</div>'+
       '<label style="display:flex;gap:10px;align-items:flex-start;font-weight:500;color:var(--ink);margin:0"><input type="checkbox" name="flexible" '+(f.flexible?'checked':'')+' style="margin-top:3px;width:18px;height:18px;flex:none"> <span>I am flexible — happy for you to suggest a different time if needed.</span></label></div>'+
     '<div class="card"><div class="field"><label for="f-addr">Where will the vehicle be?</label><input id="f-addr" type="text" name="address" value="'+esc(f.address)+'" maxlength="200" autocomplete="street-address">'+E('address')+'</div>'+
       '<div class="row2 stack"><div class="field" style="margin:0"><label for="f-phone">Contact phone</label><input id="f-phone" type="tel" name="contactPhone" value="'+esc(f.contactPhone)+'" maxlength="30" autocomplete="tel"></div>'+
@@ -462,6 +497,9 @@ function wireNewForm(){
   };
   form.addEventListener('input', clearErr);
   form.addEventListener('change', clearErr);
+  var dateInput = $('#f-date');
+  if(dateInput){ dateInput.addEventListener('change', loadAvailability); dateInput.addEventListener('input', loadAvailability); }
+  loadAvailability();
   var pi = $('#photo-input');
   if(pi) pi.addEventListener('change', function(){ addPhotos(pi.files); pi.value=''; });
 }
@@ -505,7 +543,7 @@ function onSubmitRequest(e){
       loadMe(true); renderApp(); window.scrollTo(0,0);
       return;
     }
-    if(r.data && r.data.fields){ f.errors = r.data.fields; renderView(); return; }
+    if(r.data && r.data.fields){ f.errors = r.data.fields; if(r.data.fields.preferredStart){ delete availCache[f.preferredDate]; } renderView(); return; }
     btn.disabled = false; btn.textContent = 'Send request';
     var msg = r.status===429 ? 'You have sent a lot of requests — please wait or call us.' : 'Something went wrong sending that. Please try again.';
     $('#form-err').innerHTML = '<div class="banner err">'+esc(msg)+'</div>';

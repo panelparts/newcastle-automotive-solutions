@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS time_entries (
 CREATE TABLE IF NOT EXISTS invoices (
   id TEXT PRIMARY KEY,
   booking_id TEXT,
+  customer_id TEXT,
   customer_name TEXT,
   reference TEXT,
   line_items_json TEXT NOT NULL DEFAULT '[]',
@@ -139,4 +140,73 @@ CREATE TABLE IF NOT EXISTS photos (
   content_type TEXT NOT NULL DEFAULT 'image/jpeg',
   uploaded_by TEXT,
   created_at INTEGER
+);
+
+-- ===== Customer portal tables (2026-10-06) — same statements as migration/portal.sql =====
+CREATE TABLE IF NOT EXISTS customer_users (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL,        -- which customer record this login belongs to
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT,               -- PBKDF2-SHA256, hex (NULL until invite accepted)
+  password_salt TEXT,
+  token_hash TEXT,                  -- SHA-256 of the one-time invite / reset link token
+  token_kind TEXT,                  -- 'invite' | 'reset'
+  token_expires INTEGER,
+  active INTEGER NOT NULL DEFAULT 1,
+  invited_by TEXT,
+  created_at INTEGER NOT NULL,
+  last_login_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_cu_customer ON customer_users(customer_id);
+CREATE INDEX IF NOT EXISTS idx_cu_token ON customer_users(token_hash);
+
+-- Portal sessions (the cookie holds a random token; only its SHA-256 is stored here).
+CREATE TABLE IF NOT EXISTS customer_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cs_user ON customer_sessions(user_id);
+
+-- Job requests submitted from the portal, waiting for (or past) staff review.
+CREATE TABLE IF NOT EXISTS job_requests (
+  id TEXT PRIMARY KEY,
+  ref TEXT NOT NULL,                -- short code shown to customer and staff, e.g. REQ-7KQ2M
+  customer_id TEXT NOT NULL,
+  requested_by TEXT NOT NULL,       -- customer_users.id
+  requester_name TEXT,
+  requester_email TEXT,
+  job_type TEXT NOT NULL,           -- 'mechanical' | 'adas' | 'both'
+  vehicle_json TEXT NOT NULL DEFAULT '{}',
+  address TEXT,
+  contact_phone TEXT,
+  reference TEXT,                   -- the customer's own PO / job number, optional
+  description TEXT,
+  preferred_date TEXT,              -- YYYY-MM-DD
+  preferred_start TEXT,             -- HH:MM
+  flexible INTEGER NOT NULL DEFAULT 0,
+  photos_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'pending',   -- 'pending' | 'approved' | 'declined' | 'cancelled'
+  created_at INTEGER NOT NULL,
+  decided_at INTEGER,
+  decided_by TEXT,
+  approved_date TEXT,
+  approved_start TEXT,
+  approved_end TEXT,
+  approved_staff_id TEXT,
+  adjusted INTEGER NOT NULL DEFAULT 0,      -- 1 = staff changed the date/time the customer asked for
+  staff_message TEXT,
+  booking_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jr_customer ON job_requests(customer_id);
+CREATE INDEX IF NOT EXISTS idx_jr_status ON job_requests(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jr_ref ON job_requests(ref);
+
+-- Counters used to slow down password guessing and email/request flooding.
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key TEXT PRIMARY KEY,
+  count INTEGER NOT NULL,
+  reset_at INTEGER NOT NULL
 );

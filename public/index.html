@@ -6088,6 +6088,9 @@ async function sendInvoiceIdToXero(invoiceId, bookingId){
       // visible instead of the invoice silently sitting in Xero unsent.
       var xeroEmailNoteMsg = xeroEmailNote(data.xeroEmail);
       if(xeroEmailNoteMsg) msg += ' ' + xeroEmailNoteMsg;
+      if(data.totalMismatch){
+        msg = 'WARNING: Xero recorded '+fmtMoney(data.xeroTotal)+' but this invoice is '+fmtMoney(data.invoice.total)+' — Xero has probably added GST on top (amounts are '+(data.xeroLineAmountTypes||'unknown')+'). It was NOT emailed to the customer. Fix or void invoice '+(data.invoice.xeroInvoiceNumber||'')+' in Xero before sending.';
+      }
       if(data.photoErrors && data.photoErrors.length){
         msg += ' — but '+data.photoErrors.length+' photo(s) did not attach. Check the invoice in Xero, and see Account → Xero connection.';
       }

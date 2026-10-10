@@ -201,6 +201,16 @@
   .rail-item svg{width:19px;height:19px;flex:none;}
   .rail-item:hover{background:var(--surface-2);color:var(--ink);}
   .rail-item.active{background:var(--accent-soft);color:var(--accent);}
+  /* Pending customer-portal requests count, shown on the Requests tab. */
+  .rail-item,.tab-item{position:relative;}
+  .nav-badge{font-style:normal;background:var(--accent);color:var(--accent-ink);border-radius:999px;font-size:10.5px;font-weight:700;line-height:1;padding:3px 6px;min-width:17px;text-align:center;}
+  .rail-item .nav-badge{margin-left:auto;}
+  .tab-item .nav-badge{position:absolute;top:2px;left:calc(50% + 6px);}
+  .pill-rq-pending{background:var(--st-progress-soft);color:var(--st-progress);}
+  .pill-rq-approved{background:var(--st-completed-soft);color:var(--st-completed);}
+  .pill-rq-changed{background:var(--st-booked-soft);color:var(--st-booked);}
+  .pill-rq-declined{background:var(--danger-soft);color:var(--danger);}
+  .pill-rq-cancelled{background:var(--steel-soft);color:var(--steel);}
   .rail-foot{margin-top:auto;padding:10px 12px;font-size:11.5px;color:var(--ink-faint);border-top:1px solid var(--border-soft);}
 
   .main{flex:1;min-width:0;overflow-y:auto;padding:18px 16px 90px;}
@@ -1567,6 +1577,14 @@ var state = {
   customers: [],
   services: [],
   products: [],
+  // Customer portal (2026-10-06): job requests customers submit from the portal,
+  // plus the review-screen state and the per-customer portal logins list.
+  jobRequests: [],
+  requestDraft: null,
+  requestOverlap: null,
+  requestDeclining: false,
+  requestBusy: false,
+  portalUsers: {},
   view: 'schedule',
   selectedDate: todayISO(),
   scheduleMode: 'day',
@@ -1615,7 +1633,7 @@ var db = null;
 var assetsCap = null;
 var seededOnce = false;
 
-var COLLECTIONS = ['staff','bookings','timeEntries','invoices','customers','services','products'];
+var COLLECTIONS = ['staff','bookings','timeEntries','invoices','customers','services','products','jobRequests'];
 
 function getStaff(id){ return state.staff.find(function(s){ return s.id===id; }); }
 function getBooking(id){ return state.bookings.find(function(b){ return b.id===id; }); }
@@ -1876,7 +1894,14 @@ function createRestDb(apiBase){
             return fetch(apiBase+'/collections/'+name+'/'+encodeURIComponent(id), {
               method:'PUT', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj)
             }).then(function(r){
-              if(!r.ok) throw new Error('save '+name+' failed: '+r.status);
+              if(!r.ok){
+                // 2026-10-10: carry the server's own reason into the message so the
+                // "Could not sync" toast can show WHY (status + error code).
+                return r.text().then(function(t){
+                  var why = ''; try{ var j = JSON.parse(t); why = ((j.message || j.error || '')+'').slice(0,90); }catch(_){ why = (t||'').slice(0,60); }
+                  var e = new Error('save '+name+' failed: '+r.status+(why?' ('+why+')':'')); e.status = r.status; e.why = why; throw e;
+                });
+              }
               return pollOnce(name); // refresh right away so the UI doesn't wait for the next poll tick
             });
           },
@@ -1995,6 +2020,25 @@ function subscribeRest(){
     backgroundRender();
   }, function(e){ console.warn('customers sub error', e); });
 
+  // Customer portal job requests (2026-10-06). Read-only here — approving or
+  // declining goes through /api/requests/:id/approve|decline so the server can
+  // create the booking and email the customer.
+  var requestsSeen = null;
+  db.collection('jobRequests').onSnapshot(function(snap){
+    var rows = snap.docs.map(function(d){ return d.data(); });
+    var pendingIds = rows.filter(function(r){ return r.status==='pending'; }).map(function(r){ return r.id; });
+    if(requestsSeen){
+      var fresh = rows.filter(function(r){ return r.status==='pending' && requestsSeen.indexOf(r.id)===-1; });
+      if(fresh.length){
+        var c = getCustomer(fresh[0].customerId);
+        toast('New job request'+(c?' from '+c.name:'')+(fresh.length>1?' (+'+(fresh.length-1)+' more)':''));
+      }
+    }
+    requestsSeen = pendingIds;
+    state.jobRequests = rows;
+    backgroundRender();
+  }, function(e){ console.warn('jobRequests sub error', e); });
+
   db.collection('services').onSnapshot(function(snap){
     var rows = snap.docs.map(function(d){ return d.data(); });
     if(rows.length) state.services = rows;
@@ -2032,7 +2076,7 @@ async function seedDb(){
 async function saveDoc(coll, doc){
   if(db){
     try{ await db.collection(coll).doc(doc.id).set(doc); }
-    catch(e){ console.warn('save failed', e); toast('Could not sync — saved on this device only'); localMutate(coll, doc); render(); }
+    catch(e){ console.warn('save failed', e); toast('Could not sync — saved on this device only'+(e && e.status ? ' ['+coll+' '+e.status+(e.why?': '+e.why:'')+']' : '')); localMutate(coll, doc); render(); }
   } else {
     localMutate(coll, doc);
     render();
@@ -2116,12 +2160,13 @@ function toast(msg){
 
 /* ===================== modal open/close ===================== */
 function openModal(m){ state.modal = m; state.confirmDelete = null; state.confirmVoid = null; state.confirmBillTime = null; render(); }
-function closeModal(){ state.modal = null; state.confirmDelete = null; state.confirmVoid = null; state.confirmBillTime = null; state.invoiceDraft = null; state.customerDraft = null; state.bookingDraft = null; render(); }
+function closeModal(){ state.modal = null; state.confirmDelete = null; state.confirmVoid = null; state.confirmBillTime = null; state.invoiceDraft = null; state.customerDraft = null; state.bookingDraft = null; state.requestDraft = null; state.requestOverlap = null; state.requestDeclining = false; state.requestBusy = false; state.portalRemoveConfirm = null; render(); }
 
 /* ===================== nav config ===================== */
 var NAV_ITEMS = [
   {id:'schedule', label:'Schedule', icon:ICONS.calendar},
   {id:'jobs', label:'Jobs', icon:ICONS.clipboard},
+  {id:'requests', label:'Requests', icon:ICONS.mail},
   {id:'customers', label:'Customers', icon:ICONS.contact},
   {id:'invoicing', label:'Invoicing', icon:ICONS.receipt},
   {id:'services', label:'Services', icon:ICONS.tag},
@@ -2133,7 +2178,7 @@ var NAV_ITEMS = [
 // Account (see the "Team" card in accountView()) instead of its own tab.
 // Both views (timeView(), staffView()) still exist and still work — staff is
 // just reached via a button in Account now, not a persistent tab.
-var VIEW_TITLES = {schedule:'Schedule', jobs:'Jobs', customers:'Customers', time:'Time Tracking', invoicing:'Invoicing', services:'Services', products:'Products', staff:'Staff', account:'Account', reports:'Reports'};
+var VIEW_TITLES = {schedule:'Schedule', jobs:'Jobs', requests:'Job requests', customers:'Customers', time:'Time Tracking', invoicing:'Invoicing', services:'Services', products:'Products', staff:'Staff', account:'Account', reports:'Reports'};
 
 /* ===================== render: shell ===================== */
 /* render() rebuilds the whole page from scratch via innerHTML every time it's
@@ -2448,6 +2493,14 @@ function topbarHTML(){
   '</header>';
 }
 
+function pendingRequestCount(){
+  return state.jobRequests.filter(function(r){ return r.status==='pending'; }).length;
+}
+function navBadgeHTML(n){
+  if(n.id!=='requests') return '';
+  var c = pendingRequestCount();
+  return c ? '<em class="nav-badge">'+(c>9?'9+':c)+'</em>' : '';
+}
 function navItemActive(n){
   // Staff no longer has its own tab (it's reached from inside Account), so
   // highlight Account as the active nav item while viewing it there too.
@@ -2460,7 +2513,7 @@ function navItemActive(n){
 function railHTML(){
   return '<nav class="rail">' +
     NAV_ITEMS.map(function(n){
-      return '<button class="rail-item'+(navItemActive(n)?' active':'')+'" data-action="nav" data-view="'+n.id+'">'+n.icon+'<span>'+n.label+'</span></button>';
+      return '<button class="rail-item'+(navItemActive(n)?' active':'')+'" data-action="nav" data-view="'+n.id+'">'+n.icon+'<span>'+n.label+'</span>'+navBadgeHTML(n)+'</button>';
     }).join('') +
     '<div class="rail-foot">Prototype build — sample data. Xero connection not yet linked.</div>' +
   '</nav>';
@@ -2471,7 +2524,7 @@ function tabbarHTML(){
       // aria-label carries the name even on narrow screens where the CSS
       // above hides the visible <span> text — a screen reader (or a
       // long-press tooltip) still gets "Customers", not just an icon.
-      return '<button class="tab-item'+(navItemActive(n)?' active':'')+'" data-action="nav" data-view="'+n.id+'" aria-label="'+escapeHtml(n.label)+'">'+n.icon+'<span>'+n.label+'</span></button>';
+      return '<button class="tab-item'+(navItemActive(n)?' active':'')+'" data-action="nav" data-view="'+n.id+'" aria-label="'+escapeHtml(n.label)+(n.id==='requests'&&pendingRequestCount()?' ('+pendingRequestCount()+' waiting)':'')+'">'+n.icon+'<span>'+n.label+'</span>'+navBadgeHTML(n)+'</button>';
     }).join('') +
   '</nav>';
 }
@@ -2479,6 +2532,7 @@ function tabbarHTML(){
 function viewHTML(){
   if(state.view==='schedule') return scheduleView();
   if(state.view==='jobs') return jobsView();
+  if(state.view==='requests') return requestsView();
   if(state.view==='customers') return customersView();
   if(state.view==='time') return timeView();
   if(state.view==='invoicing') return invoicingView();
@@ -3028,6 +3082,233 @@ function customersResultsHTML(){
       (vehicles?'<div class="chip-row" style="margin-top:4px">'+vehicles+'</div>':'') +
     '</div>';
   }).join('') + '</div>';
+}
+
+/* ===================== REQUESTS (customer portal) ===================== */
+// 2026-10-06, at the user's request ("can we build a online portal for
+// customers to create job requests in the app"): existing customers and fleet
+// clients get their own invite-only login to /portal/ (public/portal/index.html)
+// where they request a job with a preferred date and time. Each request lands
+// here for a staff member to review: change the date/time/technician if
+// needed, then Approve (creates the real booking and emails the customer the
+// confirmed — or adjusted — details) or Decline (emails them why). The
+// server side lives in src/portal.js; this screen only reads requests (via
+// the normal collections poll) and calls /api/requests/:id/approve|decline.
+var REQUEST_DEFAULT_MINS = {mechanical:90, adas:120, both:210};
+function reqAddMins(t, mins){
+  var total = Math.min(23*60+59, Number(t.slice(0,2))*60 + Number(t.slice(3,5)) + mins);
+  var h = Math.floor(total/60), m = total%60;
+  return (h<10?'0':'')+h+':'+(m<10?'0':'')+m;
+}
+function requestStatusPill(r){
+  if(r.status==='pending') return '<span class="pill pill-rq-pending">Pending review</span>';
+  if(r.status==='approved') return r.adjusted ? '<span class="pill pill-rq-changed">Approved — time changed</span>' : '<span class="pill pill-rq-approved">Approved</span>';
+  if(r.status==='declined') return '<span class="pill pill-rq-declined">Declined</span>';
+  return '<span class="pill pill-rq-cancelled">Cancelled by customer</span>';
+}
+function requestCardHTML(r){
+  var c = getCustomer(r.customerId);
+  var wants = fmtDateShort(r.preferredDate)+' · '+fmtTime12(r.preferredStart)+(r.flexible?' · flexible':'');
+  var outcome = '';
+  if(r.status==='approved') outcome = '<div class="helptext">Booked '+fmtDateShort(r.approvedDate)+' · '+fmtTime12(r.approvedStart)+'–'+fmtTime12(r.approvedEnd)+'</div>';
+  return '<div class="cust-card" data-action="open-request" data-id="'+r.id+'">' +
+    '<div class="row-between"><div class="staff-card-name">'+escapeHtml(c?c.name:'Unknown customer')+'</div>'+requestStatusPill(r)+'</div>' +
+    '<div class="cust-meta"><span class="cust-meta-item"><span class="badge-type">'+escapeHtml(JOB_TYPE_LABEL[r.jobType]||r.jobType)+'</span></span>' +
+      '<span class="cust-meta-item mono">'+escapeHtml(r.vehicle && r.vehicle.rego || '')+'</span>' +
+      '<span class="cust-meta-item">'+escapeHtml(r.vehicle && r.vehicle.makeModel || '')+'</span></div>' +
+    '<div class="job-addr">'+ICONS.clock+' Wants '+escapeHtml(wants)+'</div>' +
+    '<div class="job-addr">'+ICONS.pin+' '+escapeHtml(r.address||'')+'</div>' +
+    '<div class="section-sub" style="white-space:normal">'+escapeHtml((r.description||'').slice(0,140))+((r.description||'').length>140?'…':'')+'</div>' +
+    outcome +
+    '<div class="helptext">'+escapeHtml(r.ref)+' · from '+escapeHtml(r.requesterName||'')+(r.photos&&r.photos.length?' · '+r.photos.length+' photo'+(r.photos.length===1?'':'s'):'')+'</div>' +
+  '</div>';
+}
+function requestsView(){
+  var pend = state.jobRequests.filter(function(r){ return r.status==='pending'; })
+    .sort(function(a,b){ return a.createdAt-b.createdAt; });
+  var done = state.jobRequests.filter(function(r){ return r.status!=='pending'; })
+    .sort(function(a,b){ return (b.decidedAt||b.createdAt)-(a.decidedAt||a.createdAt); }).slice(0,25);
+  var portalUrl = window.location.origin + '/portal/';
+  return '' +
+    '<div class="section-head"><div><div class="section-title">Job requests</div>' +
+      '<div class="section-sub">Requests from the customer portal. Review, adjust the time if needed, then approve.</div></div></div>' +
+    '<div class="helptext">Customers sign in at <span class="mono">'+escapeHtml(portalUrl)+'</span> — invite them from their record in Customers (admin only).</div>' +
+    '<div class="section-sub" style="font-weight:700;margin-top:6px">Waiting for review ('+pend.length+')</div>' +
+    (pend.length ? '<div class="stack-sm">'+pend.map(requestCardHTML).join('')+'</div>' : '<div class="empty">No requests waiting. New ones appear here as soon as a customer submits them.</div>') +
+    (done.length ? '<div class="section-sub" style="font-weight:700;margin-top:10px">Recently handled</div><div class="stack-sm">'+done.map(requestCardHTML).join('')+'</div>' : '');
+}
+function initRequestDraft(r){
+  var me = getStaff(state.meId);
+  var active = state.staff.filter(function(s){ return s.active; });
+  var staffId = (me && me.active) ? me.id : (active[0] ? active[0].id : '');
+  state.requestDraft = {
+    id: r.id, staffId: staffId, date: r.preferredDate, start: r.preferredStart,
+    end: reqAddMins(r.preferredStart, REQUEST_DEFAULT_MINS[r.jobType]||120), message: ''
+  };
+  state.requestOverlap = null; state.requestDeclining = false; state.requestBusy = false;
+}
+function readRequestDraft(){
+  var form = document.getElementById('request-form');
+  if(!form || !state.requestDraft) return;
+  var fd = new FormData(form), d = state.requestDraft;
+  d.staffId = fd.get('staffId') || d.staffId;
+  d.date = fd.get('date') || d.date;
+  d.start = fd.get('start') || d.start;
+  d.end = fd.get('end') || d.end;
+  d.message = fd.get('message') || '';
+}
+function requestModalHTML(m){
+  var r = state.jobRequests.find(function(x){ return x.id===m.id; });
+  if(!r) return modalShell('Job request', '<div class="empty">This request is no longer available.</div>', '<button type="button" class="btn btn-block" data-action="close-modal">Close</button>');
+  if(!state.requestDraft || state.requestDraft.id!==r.id) initRequestDraft(r);
+  var d = state.requestDraft;
+  var c = getCustomer(r.customerId);
+  var rows = [
+    ['Customer', (c?c.name:'Unknown customer')+(r.requesterName?' — '+r.requesterName:'')],
+    ['Contact', [r.contactPhone || (c&&c.phone) || '', r.requesterEmail].filter(Boolean).join(' · ')],
+    ['Job type', JOB_TYPE_LABEL[r.jobType]||r.jobType],
+    ['Vehicle', [r.vehicle&&r.vehicle.rego, r.vehicle&&r.vehicle.makeModel].filter(Boolean).join(' — ')],
+    ['Where', r.address],
+    ['Their ref', r.reference],
+    ['Wants', fmtDateLong(r.preferredDate)+' at '+fmtTime12(r.preferredStart)+(r.flexible?' (flexible)':'')],
+    ['Request', r.ref]
+  ].filter(function(x){ return x[1]; }).map(function(x){
+    return '<div class="te-row"><span class="te-desc" style="flex:none;min-width:84px;color:var(--ink-faint)">'+x[0]+'</span><span style="flex:1;text-align:right;font-weight:600;overflow-wrap:anywhere">'+escapeHtml(x[1])+'</span></div>';
+  }).join('');
+  var photos = (r.photos&&r.photos.length) ? '<div class="photo-grid" style="margin-top:10px">'+r.photos.map(function(p){
+    return '<a class="photo-thumb" href="'+escapeHtml(p.url)+'" target="_blank" rel="noopener"><img src="'+escapeHtml(p.url)+'" alt="Customer photo" loading="lazy"></a>';
+  }).join('')+'</div>' : '';
+  var detailCard = '<div class="card card-pad">'+rows+
+    '<div class="section-sub" style="margin-top:10px">What they need</div><div style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:3px">'+escapeHtml(r.description||'')+'</div>'+photos+'</div>';
+
+  if(r.status!=='pending'){
+    var out = [];
+    out.push('<div class="row-between">'+requestStatusPill(r)+'<span class="helptext">'+(r.decidedBy?'by '+escapeHtml(r.decidedBy):'')+(r.decidedAt?' · '+new Date(r.decidedAt).toLocaleDateString('en-AU',{day:'numeric',month:'short'}):'')+'</span></div>');
+    if(r.status==='approved') out.push('<div style="margin-top:8px">Booked <b>'+escapeHtml(fmtDateLong(r.approvedDate))+'</b>, '+escapeHtml(fmtTime12(r.approvedStart))+'–'+escapeHtml(fmtTime12(r.approvedEnd))+(getStaff(r.approvedStaffId)?' with '+escapeHtml(getStaff(r.approvedStaffId).name):'')+'.</div>');
+    if(r.staffMessage) out.push('<div class="helptext" style="margin-top:6px;white-space:pre-wrap">Message sent: '+escapeHtml(r.staffMessage)+'</div>');
+    var openBk = (r.bookingId && getBooking(r.bookingId)) ? '<button type="button" class="btn btn-sm" style="margin-top:10px" data-action="open-booking" data-id="'+r.bookingId+'">Open the booking</button>' : '';
+    return modalShell('Job request', detailCard+'<div class="card card-pad">'+out.join('')+openBk+'</div>', '<button type="button" class="btn btn-block" data-action="close-modal">Close</button>');
+  }
+
+  var staffOpts = state.staff.filter(function(s){ return s.active; }).map(function(s){
+    return '<option value="'+s.id+'"'+(s.id===d.staffId?' selected':'')+'>'+escapeHtml(s.name)+'</option>';
+  }).join('');
+  var changed = d.date!==r.preferredDate || d.start!==r.preferredStart;
+  var overlapBlock = '';
+  if(state.requestOverlap){
+    overlapBlock = '<div class="helptext" style="color:var(--danger);font-weight:600;margin-top:6px">That time overlaps '+
+      state.requestOverlap.map(function(o){ return escapeHtml(o.customer||'another job')+' ('+fmtTime12(o.start)+'–'+fmtTime12(o.end)+')'; }).join(', ')+
+      '. Pick another time or technician, or approve anyway.</div>';
+  }
+  var form = '<form id="request-form" data-form="request" data-id="'+r.id+'">' +
+    '<div class="field"><label>Technician</label><select name="staffId" data-change="request-field">'+staffOpts+'</select></div>' +
+    '<div class="field-row3">' +
+      '<div class="field"><label>Date</label><input type="date" name="date" value="'+escapeHtml(d.date)+'" data-change="request-field" required></div>' +
+      '<div class="field"><label>Start</label><input type="time" name="start" value="'+escapeHtml(d.start)+'" step="900" data-change="request-field" required></div>' +
+      '<div class="field"><label>Finish</label><input type="time" name="end" value="'+escapeHtml(d.end)+'" step="900" data-change="request-field" required></div>' +
+    '</div>' +
+    '<div id="request-avail">'+bookingAvailHTML(d.staffId, d.date, null, d.start, d.end)+'</div>' +
+    overlapBlock +
+    (changed ? '<div class="helptext" style="margin-top:6px;color:var(--st-booked);font-weight:600">Different from what the customer asked for — the email will show both times.</div>' : '') +
+    '<div class="field" style="margin-top:10px"><label>Message to customer '+(state.requestDeclining?'(shown in the decline email)':'(optional — included in the email)')+'</label><textarea name="message" data-change="request-field" placeholder="'+(state.requestDeclining?'e.g. Fully booked that week — try the following Monday.':'e.g. Moved to 10am so the tech can reach you.')+'">'+escapeHtml(d.message||'')+'</textarea></div>' +
+  '</form>';
+
+  var busy = state.requestBusy ? ' disabled' : '';
+  var foot;
+  if(state.requestDeclining){
+    foot = '<button type="button" class="btn"'+busy+' data-action="decline-back">Back</button>' +
+           '<button type="button" class="btn btn-primary btn-block" style="background:var(--danger);border-color:var(--danger)"'+busy+' data-action="decline-confirm">'+(state.requestBusy?'Sending…':'Decline &amp; email customer')+'</button>';
+  } else {
+    foot = '<button type="button" class="btn"'+busy+' data-action="decline-start">Decline</button>' +
+           (state.requestOverlap ? '<button type="button" class="btn"'+busy+' data-action="approve-anyway">Approve anyway</button>' : '') +
+           '<button type="button" class="btn btn-primary btn-block"'+busy+' data-action="approve-request">'+(state.requestBusy?'Booking…':'Approve &amp; email customer')+'</button>';
+  }
+  return modalShell('Review request', detailCard + '<div class="card card-pad"><div class="section-sub" style="margin-bottom:8px">'+(state.requestDeclining?'Decline this request':'Confirm the booking')+'</div>'+form+'</div>', foot);
+}
+function refreshAfterRequestChange(){
+  try{ db.collection('jobRequests').get().catch(function(){}); db.collection('bookings').get().catch(function(){}); }catch(e){}
+}
+function emailOutcomeText(data){
+  if(data.emailSent) return 'customer emailed';
+  if(data.emailReason==='email_not_configured') return 'email is not set up, so the customer was NOT emailed';
+  return 'but the email failed ('+(data.emailDetail||data.emailReason||'unknown')+') — contact the customer directly';
+}
+async function approveRequest(force){
+  var d = state.requestDraft;
+  if(!d || state.requestBusy) return;
+  readRequestDraft();
+  if(!d.staffId){ toast('Pick a technician first'); return; }
+  if(!d.date || !d.start || !d.end || d.end<=d.start){ toast('Check the date and times — finish must be after start'); return; }
+  state.requestBusy = true; render();
+  try{
+    var res = await fetch('/api/requests/'+encodeURIComponent(d.id)+'/approve', {
+      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({date:d.date, start:d.start, end:d.end, staffId:d.staffId, message:d.message, force:!!force})
+    });
+    var data = await res.json().catch(function(){ return {}; });
+    state.requestBusy = false;
+    if(res.status===409 && data.error==='overlap'){ state.requestOverlap = data.with||[]; render(); return; }
+    if(res.status===409){ toast('Someone already handled this request'); refreshAfterRequestChange(); closeModal(); return; }
+    if(!res.ok){ toast(data.message || 'Could not approve — please try again'); render(); return; }
+    closeModal();
+    toast('Booked — '+emailOutcomeText(data));
+    refreshAfterRequestChange();
+  }catch(e){ state.requestBusy = false; toast('Could not reach the server — try again'); render(); }
+}
+async function declineRequest(){
+  var d = state.requestDraft;
+  if(!d || state.requestBusy) return;
+  readRequestDraft();
+  state.requestBusy = true; render();
+  try{
+    var res = await fetch('/api/requests/'+encodeURIComponent(d.id)+'/decline', {
+      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({message:d.message})
+    });
+    var data = await res.json().catch(function(){ return {}; });
+    state.requestBusy = false;
+    if(res.status===409){ toast('Someone already handled this request'); refreshAfterRequestChange(); closeModal(); return; }
+    if(!res.ok){ toast('Could not decline — please try again'); render(); return; }
+    closeModal();
+    toast('Declined — '+emailOutcomeText(data));
+    refreshAfterRequestChange();
+  }catch(e){ state.requestBusy = false; toast('Could not reach the server — try again'); render(); }
+}
+
+/* ---- customer portal logins (admin, inside the customer record) ---- */
+function loadPortalUsers(customerId){
+  if(!state.currentUser || state.currentUser.role!=='admin' || !customerId) return;
+  fetch('/api/customers/'+encodeURIComponent(customerId)+'/portal-users', {credentials:'same-origin'})
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(data){ if(data){ state.portalUsers[customerId] = data.users||[]; render(); } })
+    .catch(function(){});
+}
+function portalCardHTML(c){
+  if(!state.currentUser || state.currentUser.role!=='admin') return '';
+  var users = state.portalUsers[c.id];
+  var list;
+  if(!users) list = '<div class="helptext">Loading…</div>';
+  else {
+    var active = users.filter(function(u){ return u.active; });
+    list = active.length ? active.map(function(u){
+      var status = u.invitePending ? 'Invite sent — not accepted yet' : (u.lastLoginAt ? 'Last signed in '+new Date(u.lastLoginAt).toLocaleDateString('en-AU',{day:'numeric',month:'short'}) : 'Active');
+      var confirming = state.portalRemoveConfirm===u.id;
+      return '<div class="vehicle-row" style="flex-wrap:wrap;gap:6px">' +
+        '<div style="flex:1;min-width:160px"><div style="font-weight:600">'+escapeHtml(u.name)+'</div><div class="helptext">'+escapeHtml(u.email)+' · '+status+'</div></div>' +
+        (confirming
+          ? '<span class="helptext">Remove access?</span><button type="button" class="btn btn-sm" data-action="portal-remove-yes" data-id="'+u.id+'">Yes, remove</button><button type="button" class="btn btn-sm" data-action="portal-remove-no">No</button>'
+          : '<button type="button" class="btn btn-sm" data-action="portal-resend" data-id="'+u.id+'">'+(u.invitePending?'Resend invite':'Send reset link')+'</button>' +
+            '<button type="button" class="icon-btn" style="width:28px;height:28px" aria-label="Remove portal access" data-action="portal-remove-ask" data-id="'+u.id+'">'+ICONS.trash+'</button>') +
+      '</div>';
+    }).join('') : '<div class="helptext">No portal logins yet.</div>';
+  }
+  var form = '<form data-form="portal-invite" data-id="'+c.id+'" style="display:flex;gap:7px;margin-top:8px;align-items:flex-end;flex-wrap:wrap">' +
+    '<div class="field" style="flex:1;min-width:110px"><label>Name</label><input type="text" name="inviteName" value="'+escapeHtml(c.name||'')+'" required></div>' +
+    '<div class="field" style="flex:2;min-width:150px"><label>Email</label><input type="email" name="inviteEmail" value="'+escapeHtml(c.email||'')+'" required></div>' +
+    '<button type="submit" class="btn btn-sm">Send invite</button></form>';
+  return '<div class="card card-pad"><div class="section-sub">Customer portal</div>' +
+    '<div class="helptext" style="margin:2px 0 6px">Lets this customer request jobs online at '+escapeHtml(window.location.origin)+'/portal/. Each person gets their own login by email invite.</div>' +
+    '<div style="margin-top:6px">'+list+'</div>'+form+'</div>';
 }
 
 /* ===================== SERVICES ===================== */
@@ -3778,6 +4059,7 @@ function modalHTML(){
   if(m.type==='service') return serviceItemModalHTML(m);
   if(m.type==='product') return productItemModalHTML(m);
   if(m.type==='customer') return customerModalHTML(m);
+  if(m.type==='request') return requestModalHTML(m);
   if(m.type==='invoice') return invoiceModalHTML(m);
   if(m.type==='timerPick') return timerPickModalHTML();
   if(m.type==='logTime') return logTimeModalHTML();
@@ -4384,6 +4666,8 @@ function customerModalHTML(m){
     jobsBlock = '<div class="card card-pad"><div class="section-sub">Recent jobs</div><div style="margin-top:6px">'+jobRows+'</div></div>';
   }
 
+  var portalBlock = (editing && c) ? portalCardHTML(c) : '';
+
   var deleteBlock = '';
   if(editing && c){
     deleteBlock = '<button type="button" class="btn btn-quiet btn-sm" data-action="ask-delete-customer" data-id="'+c.id+'" data-name="'+escapeHtml(c.name)+'">'+ICONS.trash+' Delete customer</button>';
@@ -4392,7 +4676,7 @@ function customerModalHTML(m){
   var foot = '<button type="button" class="btn" data-action="close-modal">Cancel</button>' +
     '<button type="submit" form="customer-form" class="btn btn-primary btn-block">Save</button>';
 
-  return modalShell(editing?'Edit customer':'Add customer', form+vehicleBlock+jobsBlock+deleteBlock, foot);
+  return modalShell(editing?'Edit customer':'Add customer', form+vehicleBlock+jobsBlock+portalBlock+deleteBlock, foot);
 }
 
 // 2026-09-29: pulled out of invoiceModalHTML() as a standalone function
@@ -5032,6 +5316,26 @@ function bookingPhotosHTML(photos){
   }
   return thumbs + addBtn;
 }
+/* 2026-10-06: "images are not saving on the jobs". Photos added in an
+   already-saved booking's modal only ever reached the database when the whole
+   form's "Save booking" button was pressed — closing the modal with X (or the
+   app being closed) after adding photos silently threw them away. For an
+   existing booking, persist the photo list straight away (photos only, merged
+   onto the latest saved copy so nothing else is overwritten). A brand-new
+   booking has no row yet, so it still saves with the form. */
+function autosaveBookingPhotos(){
+  var d = state.bookingDraft;
+  if(!d || !d.key || d.key==='new') return;
+  var latest = getBooking(d.key);
+  if(!latest) return;
+  var run = function(){
+    var cur = getBooking(d.key) || latest;
+    var merged = Object.assign({}, cur, {photos: photosForSave(d.photos||[])});
+    saveDoc('bookings', merged);
+  };
+  var ups = d.photoUploads && d.photoUploads.length ? Promise.all(d.photoUploads) : Promise.resolve();
+  ups.then(run, run);
+}
 async function addBookingPhotos(fileList){
   if(!state.bookingDraft) return;
   if(!state.bookingDraft.photos) state.bookingDraft.photos = [];
@@ -5053,7 +5357,7 @@ async function addBookingPhotos(fileList){
   }
   var block = document.getElementById('booking-photos-block');
   if(block) block.innerHTML = bookingPhotosHTML(state.bookingDraft.photos);
-  if(added) toast(added>1 ? added+' photos added' : 'Photo added');
+  if(added){ toast(added>1 ? added+' photos added' : 'Photo added'); autosaveBookingPhotos(); }
   else toast('Could not read that image');
 }
 function openPhotoLightbox(src){
@@ -5311,8 +5615,39 @@ function handleAction(el){
   if(a==='new-product'){ openModal({type:'product', id:null}); return; }
   if(a==='ask-delete-product'){ state.confirmDelete = {type:'product', id:el.dataset.id, name:el.dataset.name}; render(); return; }
   if(a==='confirm-delete-product'){ var delProdId=el.dataset.id; closeModal(); removeDoc('products', delProdId); toast('Product deleted'); return; }
-  if(a==='edit-customer'){ openModal({type:'customer', id:el.dataset.id}); return; }
+  if(a==='edit-customer'){ openModal({type:'customer', id:el.dataset.id}); loadPortalUsers(el.dataset.id); return; }
   if(a==='new-customer'){ openModal({type:'customer', id:null}); return; }
+  if(a==='open-request'){
+    var rqOpen = state.jobRequests.find(function(x){ return x.id===el.dataset.id; });
+    if(rqOpen){ initRequestDraft(rqOpen); openModal({type:'request', id:rqOpen.id}); }
+    return;
+  }
+  if(a==='approve-request'){ approveRequest(false); return; }
+  if(a==='approve-anyway'){ approveRequest(true); return; }
+  if(a==='decline-start'){ readRequestDraft(); state.requestDeclining = true; render(); return; }
+  if(a==='decline-back'){ readRequestDraft(); state.requestDeclining = false; render(); return; }
+  if(a==='decline-confirm'){ declineRequest(); return; }
+  if(a==='portal-resend'){
+    fetch('/api/portal-users/'+encodeURIComponent(el.dataset.id)+'/resend-invite', {method:'POST', credentials:'same-origin'})
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, d:d}; }); })
+      .then(function(res){
+        if(res.d && res.d.ok) toast(res.d.kind==='reset' ? 'Password reset link emailed' : 'Invite emailed again');
+        else if(res.d && res.d.reason==='email_not_configured') toast('Email is not set up — cannot send');
+        else if(res.ok===false && res.d && res.d.error==='too_many_attempts') toast('Sent too many times — try again in an hour');
+        else toast('Could not send the email'+(res.d&&res.d.detail?' ('+res.d.detail+')':''));
+        if(state.modal && state.modal.id) loadPortalUsers(state.modal.id);
+      }).catch(function(){ toast('Could not reach the server'); });
+    return;
+  }
+  if(a==='portal-remove-ask'){ state.portalRemoveConfirm = el.dataset.id; render(); return; }
+  if(a==='portal-remove-no'){ state.portalRemoveConfirm = null; render(); return; }
+  if(a==='portal-remove-yes'){
+    state.portalRemoveConfirm = null;
+    fetch('/api/portal-users/'+encodeURIComponent(el.dataset.id), {method:'DELETE', credentials:'same-origin'})
+      .then(function(r){ if(r.ok) toast('Portal access removed'); else toast('Could not remove access'); if(state.modal && state.modal.id) loadPortalUsers(state.modal.id); })
+      .catch(function(){ toast('Could not reach the server'); });
+    return;
+  }
   if(a==='pick-booking-service'){
     addBookingServiceItem(getService(el.dataset.id));
     return;
@@ -5514,6 +5849,7 @@ function handleAction(el){
     if(state.bookingDraft && state.bookingDraft.photos) state.bookingDraft.photos.splice(bpIdx,1);
     var bpBlock = document.getElementById('booking-photos-block');
     if(bpBlock) bpBlock.innerHTML = bookingPhotosHTML(state.bookingDraft ? state.bookingDraft.photos : []);
+    autosaveBookingPhotos();
     return;
   }
   if(a==='view-photo'){
@@ -5821,6 +6157,25 @@ function loginEmailErrorMessage(data){
 function handleFormSubmit(form){
   var type = form.dataset.form;
   var fd = new FormData(form);
+  if(type==='portal-invite'){
+    var custId = form.dataset.id;
+    var btn = form.querySelector('button[type="submit"]');
+    if(btn) btn.disabled = true;
+    fetch('/api/customers/'+encodeURIComponent(custId)+'/portal-invite', {
+      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name: fd.get('inviteName'), email: fd.get('inviteEmail')})
+    }).then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, d:d}; }); })
+    .then(function(res){
+      if(btn) btn.disabled = false;
+      if(res.ok && res.d.emailSent) toast('Invite emailed to '+fd.get('inviteEmail'));
+      else if(res.ok && res.d.emailReason==='email_not_configured') toast('Login created, but email is not set up so no invite was sent');
+      else if(res.ok) toast('Login created, but the email failed'+(res.d.emailDetail?' ('+res.d.emailDetail+')':'')+' — use Resend invite');
+      else if(res.d && res.d.error==='email_in_use') toast('That email already has a portal login for a different customer');
+      else toast((res.d && res.d.message) || 'Could not send the invite');
+      loadPortalUsers(custId);
+    }).catch(function(){ if(btn) btn.disabled = false; toast('Could not reach the server'); });
+    return;
+  }
   if(type==='account-settings'){
     var newSettings = {
       id:'company',
@@ -6035,6 +6390,23 @@ function handleFormSubmit(form){
 
 /* ===================== change events ===================== */
 function handleChange(el){
+  if(el.dataset.change==='request-field'){
+    readRequestDraft();
+    state.requestOverlap = null;
+    // The message box needs no redraw (its text is read again when Approve /
+    // Decline is pressed) — redrawing on its blur is exactly what swallows
+    // the first tap on the button next to it (see Bug 14 above). The staff /
+    // date / time fields do change what's shown (availability, the "different
+    // from what they asked" note), so those redraw — but only once any tap
+    // in progress has finished.
+    if(el.tagName!=='TEXTAREA'){
+      setTimeout(function redrawWhenIdle(){
+        if(pointerActive){ setTimeout(redrawWhenIdle, 30); return; }
+        if(state.modal && state.modal.type==='request') render();
+      }, 0);
+    }
+    return;
+  }
   if(el.dataset.change==='set-me'){
     state.meId = el.value || null;
     safeSet('bb_meId', state.meId || '');

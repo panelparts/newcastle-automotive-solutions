@@ -4495,6 +4495,13 @@ function timesOverlap(aStart, aEnd, bStart, bEnd){
   return aStart < bEnd && bStart < aEnd;
 }
 function findBookingConflict(staffId, date, start, end, excludeId){
+  // 2026-10-10, at the user's request ("I know I have asked to have booking
+  // not be able to overlap but its not working can this be removed"): the
+  // double-booking block is switched off. Overlapping jobs now save without
+  // any warning or refusal. (The neutral "Already booked for ..." list in
+  // bookingAvailHTML() is informational only and still shows.) To bring the
+  // block back, delete this early return.
+  return null;
   if(!staffId || !date || !start || !end) return null;
   var others = otherBookingsForStaffDate(staffId, date, excludeId);
   for(var i=0; i<others.length; i++){

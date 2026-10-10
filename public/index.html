@@ -2606,6 +2606,12 @@ var SCHED_SNAP_MIN = 15;
 var SCHED_HOLD_MS = 1000;          // how long a block must be held still before a drag can start
 var SCHED_HOLD_MOVE_CANCEL_PX = 12; // movement beyond this during the hold reads as "not a hold" (a tap or a scroll attempt), not a jitter to ignore
 
+// 2026-10-10, at the user's request ("Jobs that have been invoiced or
+// completed can they be automatically removed from the booking screen"):
+// completed and invoiced jobs no longer appear on the Schedule (grid or the
+// date-strip dots). They are NOT deleted — they stay in the Jobs list, on
+// invoices, in reports and in the customer's history.
+function onScheduleStatus(b){ return b.status!=='completed' && b.status!=='invoiced'; }
 function scheduleView(){
   // build a rolling strip centered loosely around today, always including selectedDate
   var base = todayISO();
@@ -2615,7 +2621,7 @@ function scheduleView(){
 
   var stripHTML = strip.map(function(iso){
     var info = fmtDayChip(iso);
-    var has = state.bookings.some(function(b){ return b.date===iso; });
+    var has = state.bookings.some(function(b){ return b.date===iso && onScheduleStatus(b); });
     var cls = 'day-chip' + (iso===state.selectedDate?' active':'') + (has?' has-jobs':'');
     return '<button class="'+cls+'" data-action="change-date" data-date="'+iso+'">' +
       '<div class="dow">'+info.dow+'</div><div class="dom">'+info.dom+'</div><div class="mk"></div></button>';
@@ -2759,7 +2765,7 @@ function scheduleGridHTML(dates){
   var jobsByDate = {};
   var allJobs = [];
   dates.forEach(function(iso){
-    var jobs = state.bookings.filter(function(b){ return b.date===iso && (state.staffFilter==='all'||b.staffId===state.staffFilter); });
+    var jobs = state.bookings.filter(function(b){ return b.date===iso && onScheduleStatus(b) && (state.staffFilter==='all'||b.staffId===state.staffFilter); });
     jobsByDate[iso] = jobs;
     allJobs = allJobs.concat(jobs);
   });

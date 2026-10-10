@@ -626,6 +626,15 @@
   .modal-head h3{font-size:18px;}
   .modal-body{padding:16px 18px 20px;display:flex;flex-direction:column;gap:16px;}
   .modal-foot{display:flex;gap:9px;padding:14px 18px;border-top:1px solid var(--border-soft);position:sticky;bottom:0;background:var(--surface);}
+  /* Full-screen picker layered over a modal (booking 'Add job items') */
+  .fs-picker{position:fixed;inset:0;z-index:60;background:var(--surface);display:flex;flex-direction:column;}
+  .fs-picker-head{display:flex;align-items:center;gap:10px;padding:max(12px,env(safe-area-inset-top)) 14px 12px;border-bottom:1px solid var(--border-soft);}
+  .fs-picker-head h3{font-size:18px;}
+  .fs-picker-search{padding:12px 14px 6px;}
+  .fs-picker-added{padding:0 14px;max-height:26vh;overflow-y:auto;}
+  .fs-picker-added:not(:empty){padding-bottom:8px;border-bottom:1px solid var(--border-soft);}
+  .fs-picker-list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 14px;display:flex;flex-direction:column;gap:8px;}
+  .fs-picker-foot{padding:12px 14px max(14px,env(safe-area-inset-bottom));border-top:1px solid var(--border-soft);background:var(--surface);}
   .divider{height:1px;background:var(--border-soft);border:none;margin:2px 0;}
   .status-stepper{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 
@@ -1567,6 +1576,9 @@ function buildSeedInvoices(){
 // 'staff' comes back empty from D1; that's server data, not this client
 // state, so it's unaffected by this change.
 var state = {
+  // Full-screen 'Add job items' picker layered over the booking form (2026-10-10)
+  bookingPicker: false,
+  bookingPickerSearch: '',
   currentUser: null,
   users: [],
   settings: Object.assign({}, DEFAULT_SETTINGS),
@@ -2160,7 +2172,7 @@ function toast(msg){
 
 /* ===================== modal open/close ===================== */
 function openModal(m){ state.modal = m; state.confirmDelete = null; state.confirmVoid = null; state.confirmBillTime = null; render(); }
-function closeModal(){ state.modal = null; state.confirmDelete = null; state.confirmVoid = null; state.confirmBillTime = null; state.invoiceDraft = null; state.customerDraft = null; state.bookingDraft = null; state.requestDraft = null; state.requestOverlap = null; state.requestDeclining = false; state.requestBusy = false; state.portalRemoveConfirm = null; render(); }
+function closeModal(){ state.modal = null; state.confirmDelete = null; state.confirmVoid = null; state.confirmBillTime = null; state.invoiceDraft = null; state.customerDraft = null; state.bookingDraft = null; state.bookingPicker = false; state.bookingPickerSearch = ''; state.requestDraft = null; state.requestOverlap = null; state.requestDeclining = false; state.requestBusy = false; state.portalRemoveConfirm = null; render(); }
 
 /* ===================== nav config ===================== */
 var NAV_ITEMS = [
@@ -2263,7 +2275,7 @@ function render(){
   // same as #main-scroll used to — "a few seconds" matches the 4-second
   // poll tick almost exactly. Generalized to a small list of ids so any
   // current or future nested-scroll picker gets the same protection.
-  var SCROLL_PRESERVE_IDS = ['main-scroll','service-results-list','product-results-list','booking-service-results'];
+  var SCROLL_PRESERVE_IDS = ['main-scroll','service-results-list','product-results-list','booking-service-results','booking-picker-list'];
   var prevScrollTops = {};
   SCROLL_PRESERVE_IDS.forEach(function(id){
     var el = document.getElementById(id);
@@ -2293,7 +2305,7 @@ function render(){
   // state.confirmBillTime check below runs, it's already up to date for this
   // same render pass. Same established pattern this file already uses for
   // state.invoiceDraft itself.
-  mroot.innerHTML = (state.modal ? modalHTML() : '') + (state.confirmDelete ? confirmDeleteModalHTML() : '') + (state.confirmVoid ? confirmVoidModalHTML() : '') + (state.confirmBillTime ? confirmBillTimeModalHTML() : '');
+  mroot.innerHTML = (state.modal ? modalHTML() : '') + (state.bookingPicker && state.modal && state.modal.type==='booking' ? bookingPickerHTML() : '') + (state.confirmDelete ? confirmDeleteModalHTML() : '') + (state.confirmVoid ? confirmVoidModalHTML() : '') + (state.confirmBillTime ? confirmBillTimeModalHTML() : '');
   wirePostRender();
   restoreFormFields(app, snapshot, focusKey, selStart, selEnd);
   restoreFormFields(mroot, snapshot, focusKey, selStart, selEnd);
@@ -3001,6 +3013,47 @@ document.addEventListener('pointerdown', function(e){
   if(!el) return;
   startSchedDrag(e, el);
 });
+/* ---- Swipe left/right on the Schedule to change day (2026-10-10, at the
+   user's request: "swipe to the right to change the day the main body").
+   Touch events (not pointer events) are used on purpose: once the browser
+   decides a gesture is a scroll it fires pointercancel, but touchstart /
+   touchend keep arriving, so a horizontal flick is always seen.
+   Rules: Schedule view only; no modal open; not from the date strip / chips /
+   buttons / inputs (they scroll or act on their own); not while a job block
+   is held or being dragged; must be clearly horizontal (>=60px and well over
+   the vertical movement) and quick. Swipe right = earlier day (the page
+   slides in from the left, like turning back a page), swipe left = later day.
+   Week view moves a whole week. */
+var swipeStart = null;
+document.addEventListener('touchstart', function(e){
+  swipeStart = null;
+  if(state.view!=='schedule' || state.modal || state.confirmDelete || state.confirmVoid || state.confirmBillTime) return;
+  if(!e.touches || e.touches.length!==1) return;
+  var t = e.target;
+  if(!t || !t.closest) return;
+  if(!t.closest('#main-scroll')) return;
+  if(t.closest('#day-strip, .chip-row, .date-nav, button, input, select, textarea, a')) { if(!t.closest('[data-sched-drag]')) return; }
+  swipeStart = {x:e.touches[0].clientX, y:e.touches[0].clientY, t:Date.now()};
+}, {passive:true});
+document.addEventListener('touchend', function(e){
+  var s0 = swipeStart; swipeStart = null;
+  if(!s0 || !e.changedTouches || !e.changedTouches.length) return;
+  if(schedDrag && (schedDrag.armed || schedDrag.moved)) return;
+  if(schedDragJustEnded) return;
+  var dx = e.changedTouches[0].clientX - s0.x;
+  var dy = e.changedTouches[0].clientY - s0.y;
+  if(Date.now() - s0.t > 900) return;
+  if(Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)*1.8) return;
+  var delta = dx > 0 ? -1 : 1;
+  if(state.scheduleMode==='week') delta *= 7;
+  if(schedDrag) cancelHoldOnly(schedDrag);
+  state.selectedDate = addDays(state.selectedDate, delta);
+  render();
+  // Keep the chosen day visible in the date strip.
+  var strip = document.getElementById('day-strip');
+  var active = strip && strip.querySelector('.day-chip.active');
+  if(active){ strip.scrollLeft = Math.max(0, active.offsetLeft - (strip.clientWidth - active.offsetWidth)/2); }
+}, {passive:true});
 document.addEventListener('pointermove', moveSchedDrag);
 document.addEventListener('pointerup', endSchedDrag);
 document.addEventListener('pointercancel', cancelSchedDrag);
@@ -4278,8 +4331,13 @@ function bookingModalHTML(m){
       '<div class="section-sub">Job items (optional)</div>' +
       '<div class="helptext" style="margin-top:2px">Attach items from the service list — these carry through as pre-filled invoice lines.</div>' +
       '<div id="booking-service-chips" style="margin-top:8px">'+bookingServiceItemsHTML()+'</div>' +
-      '<div class="field" style="margin-top:8px"><input type="text" id="booking-service-input" placeholder="Search item code or name to add…" autocomplete="off"></div>' +
-      '<div class="stack-sm" id="booking-service-results" style="margin-top:6px;max-height:180px;overflow:auto">'+bookingServiceResultsHTML('')+'</div>' +
+      // 2026-10-10 ("when selecting a product to add to a booking can this
+      // open a new screen its to hard to complete on the phone due to
+      // space"): the search box + tiny scrolling list used to sit inline
+      // here. It is now one button that opens a full-screen picker
+      // (bookingPickerHTML) layered over the booking form. The form stays
+      // mounted underneath, so nothing typed so far is lost.
+      '<button type="button" class="btn btn-block" style="margin-top:8px" data-action="open-booking-picker">'+ICONS.plus+' Add job item</button>' +
     '</div>';
 
   var extra = '';
@@ -4302,6 +4360,34 @@ function bookingModalHTML(m){
     '<button type="submit" form="booking-form" class="btn btn-primary btn-block">Save booking</button>';
 
   return modalShell(editing?'Edit booking':'New booking', form+serviceBlock+extra+deleteBlock, foot);
+}
+function bookingPickerHTML(){
+  var count = (state.bookingDraft && state.bookingDraft.serviceItems.length) || 0;
+  return '<div class="fs-picker" id="booking-picker">' +
+    '<div class="fs-picker-head">' +
+      '<button type="button" class="btn btn-quiet btn-sm" data-action="close-booking-picker">'+ICONS.chevL+' Back</button>' +
+      '<h3>Add job items</h3>' +
+    '</div>' +
+    '<div class="fs-picker-search"><div class="field"><input type="text" id="booking-picker-input" placeholder="Search item code or name…" autocomplete="off" value="'+escapeHtml(state.bookingPickerSearch||'')+'"></div></div>' +
+    '<div class="fs-picker-added" id="booking-picker-added">'+bookingPickerAddedHTML()+'</div>' +
+    '<div class="fs-picker-list" id="booking-picker-list">'+bookingServiceResultsHTML(state.bookingPickerSearch||'')+'</div>' +
+    '<div class="fs-picker-foot"><button type="button" class="btn btn-primary btn-block" data-action="close-booking-picker" id="booking-picker-done">'+(count?'Done ('+count+' added)':'Done')+'</button></div>' +
+  '</div>';
+}
+function bookingPickerAddedHTML(){
+  var items = (state.bookingDraft && state.bookingDraft.serviceItems) || [];
+  if(!items.length) return '';
+  return '<div class="helptext" style="margin-bottom:4px">Added to this booking (tap \u00d7 to remove)</div>' + bookingServiceItemsHTML();
+}
+function refreshBookingPicker(){
+  var list = document.getElementById('booking-picker-list');
+  var inp = document.getElementById('booking-picker-input');
+  if(list) list.innerHTML = bookingServiceResultsHTML(inp ? inp.value : '');
+  var added = document.getElementById('booking-picker-added');
+  if(added) added.innerHTML = bookingPickerAddedHTML();
+  var done = document.getElementById('booking-picker-done');
+  var n = (state.bookingDraft && state.bookingDraft.serviceItems.length) || 0;
+  if(done) done.textContent = n ? 'Done ('+n+' added)' : 'Done';
 }
 function serviceLabel(s){ return s.code + ' · ' + s.name; }
 function findServiceByLabel(label){
@@ -4358,6 +4444,7 @@ function addBookingServiceItem(match){
   if(results) results.innerHTML = '';
   var chips = document.getElementById('booking-service-chips');
   if(chips) chips.innerHTML = bookingServiceItemsHTML();
+  refreshBookingPicker();
 }
 function bumpBookingEndTime(deltaMins){
   if(!deltaMins) return;
@@ -5665,6 +5752,16 @@ function handleAction(el){
       .catch(function(){ toast('Could not reach the server'); });
     return;
   }
+  if(a==='open-booking-picker'){
+    state.bookingPicker = true; state.bookingPickerSearch = '';
+    render();
+    return;
+  }
+  if(a==='close-booking-picker'){
+    state.bookingPicker = false; state.bookingPickerSearch = '';
+    render();
+    return;
+  }
   if(a==='pick-booking-service'){
     addBookingServiceItem(getService(el.dataset.id));
     return;
@@ -5694,6 +5791,7 @@ function handleAction(el){
     }
     var bsChips = document.getElementById('booking-service-chips');
     if(bsChips) bsChips.innerHTML = bookingServiceItemsHTML();
+    refreshBookingPicker();
     return;
   }
   if(a==='remove-customer-vehicle'){
@@ -6568,11 +6666,12 @@ function wirePostRender(){
       logTimeItemSelect.innerHTML = itemOptionsHTML(getBooking(logTimeBookingSelect.value));
     });
   }
-  var bookingSvcInput = document.getElementById('booking-service-input');
-  if(bookingSvcInput){
-    bookingSvcInput.addEventListener('input', function(){
-      var results = document.getElementById('booking-service-results');
-      if(results) results.innerHTML = bookingServiceResultsHTML(bookingSvcInput.value);
+  var bookingPickInput = document.getElementById('booking-picker-input');
+  if(bookingPickInput){
+    bookingPickInput.addEventListener('input', function(){
+      state.bookingPickerSearch = bookingPickInput.value;
+      var list = document.getElementById('booking-picker-list');
+      if(list) list.innerHTML = bookingServiceResultsHTML(bookingPickInput.value);
     });
   }
   var custNameInput = document.getElementById('cust-name-input');
@@ -6688,6 +6787,7 @@ document.addEventListener('keydown', function(e){
   if(state.confirmDelete){ state.confirmDelete = null; render(); return; }
   if(state.confirmVoid){ state.confirmVoid = null; render(); return; }
   if(state.confirmBillTime){ state.confirmBillTime = null; render(); return; }
+  if(state.bookingPicker){ state.bookingPicker = false; state.bookingPickerSearch = ''; render(); return; }
   if(state.modal){ closeModal(); }
 });
 

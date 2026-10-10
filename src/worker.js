@@ -58,6 +58,8 @@
  * with an expiry — there is no separate signing secret to configure.
  */
 
+import { handlePortalApi, handleStaffPortalApi, jobRequestToDoc } from './portal.js';
+
 const SESSION_COOKIE = 'bb_session';
 const SESSION_DAYS = 30;
 
@@ -74,14 +76,14 @@ export default {
     }
 
     try {
-      return await routeApi(request, env, url);
+      return await routeApi(request, env, url, ctx);
     } catch (err) {
       return json({ error: 'server_error', message: String((err && err.message) || err) }, 500);
     }
   },
 };
 
-async function routeApi(request, env, url) {
+async function routeApi(request, env, url, ctx) {
   const path = url.pathname.replace(/^\/api/, '');
   const method = request.method;
 
@@ -94,9 +96,20 @@ async function routeApi(request, env, url) {
   if (path === '/internal/xero-invoice-status' && method === 'POST') return receiveXeroInvoiceStatus(request, env);
   if (path === '/internal/xero-contact-update' && method === 'POST') return receiveXeroContactUpdate(request, env);
 
+  // Customer portal (added 2026-10-06) — customers have their own logins and
+  // their own cookie, completely separate from staff sessions. Handled
+  // entirely in src/portal.js, BEFORE the staff session check below, so a
+  // customer session can never be mistaken for (or reach) a staff route.
+  if (path.startsWith('/portal/')) return handlePortalApi(request, env, ctx, url, path);
+
   // Everything else requires a signed-in session.
   const user = await getSessionUser(request, env);
   if (!user) return json({ error: 'unauthorized' }, 401);
+
+  // Staff side of the portal: reviewing job requests and managing customer
+  // portal logins. Returns null for any path that isn't one of its own.
+  const portalRes = await handleStaffPortalApi(request, env, ctx, url, path, user, { saveDoc: saveCollectionDoc });
+  if (portalRes) return portalRes;
 
   if (path === '/users' && method === 'GET') return listUsers(env, user);
   if (path === '/users' && method === 'POST') return createUser(request, env, user);
@@ -113,6 +126,10 @@ async function routeApi(request, env, url) {
   if (collMatch) {
     const [, coll, id] = collMatch;
     if (!COLLECTIONS[coll]) return json({ error: 'unknown_collection' }, 404);
+    // Job requests are only ever changed through the dedicated approve/decline
+    // routes (they create bookings and send emails) — the generic collection
+    // route may only read them.
+    if (coll === 'jobRequests' && method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
     if (method === 'GET' && !id) return listCollection(coll, env);
     if (method === 'PUT' && id) {
       const result = await upsertCollection(coll, id, request, env);
@@ -471,6 +488,11 @@ const COLLECTIONS = {
     toRow: (d) => ({ id: d.id, code: d.code || '', name: d.name || '', sales_description: d.salesDescription || '', sales_price: Number(d.salesUnitPrice) || 0, cost_price: d.purchasesUnitPrice != null ? Number(d.purchasesUnitPrice) : null, tax_rate: d.taxRate || '', qty_in_stock: d.quantity != null ? Number(d.quantity) : null, active: d.status === 'Archived' ? 0 : 1 }),
     toDoc: (r) => ({ id: r.id, code: r.code, name: r.name, salesDescription: r.sales_description, salesUnitPrice: r.sales_price, purchasesUnitPrice: r.cost_price, taxRate: r.tax_rate, quantity: r.qty_in_stock, status: r.active ? 'Active' : 'Archived' }),
   },
+  jobRequests: {
+    table: 'job_requests',
+    toRow: () => { throw new Error('job requests are read-only through this route'); },
+    toDoc: (r) => jobRequestToDoc(r),
+  },
   settings: {
     table: 'settings',
     toRow: (d) => ({ id: d.id || 'company', company_name: d.companyName || '', abn: d.abn || '', phone: d.phone || '', email: d.email || '', address: d.address || '', labour_rate: Number(d.labourRate) || 0, xero_worker_url: d.xeroWorkerUrl || '' }),
@@ -484,10 +506,17 @@ async function listCollection(coll, env) {
   return json({ docs: results.map(def.toDoc) });
 }
 async function upsertCollection(coll, id, request, env) {
-  const def = COLLECTIONS[coll];
   let doc;
   try { doc = await request.json(); } catch (e) { return json({ error: 'invalid_json' }, 400); }
   doc.id = id;
+  await saveCollectionDoc(env, coll, doc);
+  return json({ ok: true, id });
+}
+// Shared by the generic PUT route above and by portal request approval
+// (src/portal.js), so a booking created from a request is written with
+// exactly the same column mapping as one saved from the schedule screen.
+async function saveCollectionDoc(env, coll, doc) {
+  const def = COLLECTIONS[coll];
   const row = def.toRow(doc);
   const cols = Object.keys(row);
   const placeholders = cols.map(() => '?').join(', ');
@@ -495,11 +524,15 @@ async function upsertCollection(coll, id, request, env) {
   const sql = `INSERT INTO ${def.table} (${cols.join(', ')}) VALUES (${placeholders})
                ON CONFLICT(id) DO UPDATE SET ${updates}`;
   await env.DB.prepare(sql).bind(...cols.map((c) => row[c])).run();
-  return json({ ok: true, id });
 }
 async function deleteCollection(coll, id, env) {
   const def = COLLECTIONS[coll];
   await env.DB.prepare(`DELETE FROM ${def.table} WHERE id = ?`).bind(id).run();
+  if (coll === 'customers') {
+    // A deleted customer's portal logins must stop working immediately.
+    await env.DB.prepare('DELETE FROM customer_sessions WHERE user_id IN (SELECT id FROM customer_users WHERE customer_id = ?)').bind(id).run().catch(() => {});
+    await env.DB.prepare('UPDATE customer_users SET active = 0 WHERE customer_id = ?').bind(id).run().catch(() => {});
+  }
   return json({ ok: true });
 }
 
@@ -683,8 +716,18 @@ async function sendInvoiceToXero(id, env) {
   // second failure on top of whatever already stopped it being authorised.
   // Never blocks or fails the invoice send itself, same non-fatal pattern as
   // photoErrors/photoEmail below.
+  // 2026-10-10: the user found Xero charging GST on top of already
+  // GST-inclusive amounts. Compare the total Xero actually recorded with the
+  // total this app calculated; if they differ by more than a couple of cents,
+  // do NOT let Xero email that invoice to the customer (it's already created
+  // in Xero, so the user can fix/void it there first) and tell the user why.
+  const xeroTotal = xeroBody.xeroTotal != null ? Number(xeroBody.xeroTotal) : null;
+  const totalMismatch = xeroTotal != null && Math.abs(xeroTotal - Number(doc.total || 0)) > 0.02;
+
   let xeroEmail;
-  if (xeroBody.xeroStatus === 'AUTHORISED') {
+  if (totalMismatch) {
+    xeroEmail = { sent: false, reason: 'total_mismatch', detail: 'Xero total ' + xeroTotal.toFixed(2) + ' does not match app total ' + Number(doc.total || 0).toFixed(2) };
+  } else if (xeroBody.xeroStatus === 'AUTHORISED') {
     xeroEmail = await emailInvoiceViaXero(env, xeroBody.invoiceId).catch((err) => ({
       sent: false,
       reason: 'exception',
@@ -719,6 +762,9 @@ async function sendInvoiceToXero(id, env) {
     photoEmail,
     xeroEmail,
     xeroStatus: xeroBody.xeroStatus,
+    xeroTotal: xeroTotal != null ? xeroTotal : undefined,
+    xeroLineAmountTypes: xeroBody.xeroLineAmountTypes || undefined,
+    totalMismatch: totalMismatch || undefined,
     xeroValidationErrors: xeroBody.validationErrors || undefined,
     xeroWarnings: xeroBody.warnings || undefined,
   });

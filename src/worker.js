@@ -614,9 +614,17 @@ async function sendInvoiceToXero(id, env) {
   const doc = def.toDoc(row);
   if (doc.status === 'sent') return json({ ok: true, invoice: doc }); // already sent, idempotent
 
+  // 2026-10-12: invoice date = today in Sydney; due date = 31 days after the
+  // END of the invoice month (e.g. 12 Oct -> 31 Oct + 31 = 1 Dec). Previously
+  // neither was sent and Xero ended up with an almost-immediate due date.
+  const invoiceDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+  const dueD = new Date(Date.UTC(Number(invoiceDate.slice(0, 4)), Number(invoiceDate.slice(5, 7)), 0)); // last day of the invoice month
+  dueD.setUTCDate(dueD.getUTCDate() + 31);
   const payload = {
     customerName: doc.customerName,
     reference: doc.reference,
+    date: invoiceDate,
+    dueDate: dueD.toISOString().slice(0, 10),
     lineItems: doc.lineItems.map((li) => ({ description: li.desc, amount: li.amount })),
     // 2026-09-25, at the user's request: send a finished, "Approved" invoice
     // in Xero rather than a Draft — the connector's createInvoiceCore()

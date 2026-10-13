@@ -1914,7 +1914,16 @@ function createRestDb(apiBase){
                   var e = new Error('save '+name+' failed: '+r.status+(why?' ('+why+')':'')); e.status = r.status; e.why = why; throw e;
                 });
               }
-              return pollOnce(name); // refresh right away so the UI doesn't wait for the next poll tick
+              // refresh right away so the UI doesn't wait for the next poll tick.
+              // 2026-10-12: a failure of this REFRESH (a dropped connection or slow
+              // reply right after the save) used to be reported as "Could not sync -
+              // saved on this device only" even though the server had already saved
+              // the change. The save succeeded, so a failed refresh is ignored here —
+              // the 4-second poll catches up on its own.
+              return pollOnce(name).catch(function(){});
+            }, function(netErr){
+              // The save request itself never got an answer (no signal, request timed out).
+              var e = new Error('save '+name+' failed: network'); e.status = 0; e.why = ('no connection ('+((netErr && netErr.message)||'network error')+')').slice(0,80); throw e;
             });
           },
           delete: function(){
@@ -2088,7 +2097,7 @@ async function seedDb(){
 async function saveDoc(coll, doc){
   if(db){
     try{ await db.collection(coll).doc(doc.id).set(doc); }
-    catch(e){ console.warn('save failed', e); toast('Could not sync — saved on this device only'+(e && e.status ? ' ['+coll+' '+e.status+(e.why?': '+e.why:'')+']' : '')); localMutate(coll, doc); render(); }
+    catch(e){ console.warn('save failed', e); toast('Could not sync — saved on this device only'+(e && e.why ? ' ['+coll+(e.status?' '+e.status:'')+': '+e.why+']' : (e && e.status ? ' ['+coll+' '+e.status+']' : '')), 8000); localMutate(coll, doc); render(); }
   } else {
     localMutate(coll, doc);
     render();
@@ -2161,13 +2170,13 @@ async function removeDoc(coll, id){
 
 /* ===================== toast ===================== */
 var toastTimer = null;
-function toast(msg){
+function toast(msg, ms){
   var t = document.getElementById('toast');
   if(!t) return;
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(function(){ t.classList.remove('show'); }, 2600);
+  toastTimer = setTimeout(function(){ t.classList.remove('show'); }, ms || 2600);
 }
 
 /* ===================== modal open/close ===================== */

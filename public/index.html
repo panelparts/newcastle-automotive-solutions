@@ -4834,6 +4834,22 @@ function extraLinesHTML(lines, bookingId){
 }
 
 /* ---- invoice modal ---- */
+// 2026-10-13 ("when i add a service it wipes the customer name and reference"):
+// the standalone invoice screen's Customer name / Reference boxes are plain
+// form fields, not part of invoiceDraft. The service/product pickers replace
+// the whole invoice screen, and it is rebuilt from invoiceDraft when you come
+// back — so whatever was typed in those boxes was lost. Copy them into the
+// draft just before a picker opens so they are put back on return.
+function captureStandaloneInvoiceFields(){
+  var d = state.invoiceDraft;
+  if(!d) return;
+  var nameEl = document.getElementById('cust-name-input');
+  var refEl = document.getElementById('standalone-inv-reference');
+  if(nameEl) d.initialCustomerName = nameEl.value;
+  if(refEl) d.initialReference = refEl.value;
+  var sc = document.querySelector('#save-contact-row input[name=saveContact]');
+  if(sc) d.saveContact = sc.checked;
+}
 function invoiceModalHTML(m){
   // 2026-09-29, at the user's request ("I have a booking that has gone into
   // Draft as i was not finished with it now im not able to edit the
@@ -5216,7 +5232,7 @@ function standaloneInvoiceModalHTML(m, editingInvoice){
       '</div>' +
       '<div style="min-height:26px">' +
         '<div class="helptext" id="cust-match-hint" style="'+(initialMatchedCust?'':'visibility:hidden')+'">Matches an existing contact — their saved details will fill in.</div>' +
-        '<label class="check-row" id="save-contact-row" style="'+(initialMatchedCust?'visibility:hidden':'')+'"><input type="checkbox" name="saveContact" checked> Save as a customer contact for next time</label>' +
+        '<label class="check-row" id="save-contact-row" style="'+(initialMatchedCust?'visibility:hidden':'')+'"><input type="checkbox" name="saveContact"'+(state.invoiceDraft.saveContact===false?'':' checked')+'> Save as a customer contact for next time</label>' +
       '</div>' +
       '<div style="margin-top:10px">'+extraLines+'</div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">' +
@@ -5930,6 +5946,7 @@ function handleAction(el){
   }
   if(a==='open-service-picker'){
     if(!state.invoiceDraft) return;
+    captureStandaloneInvoiceFields();
     state.serviceSearch = '';
     openModal({type:'servicePicker'});
     return;
@@ -5949,6 +5966,7 @@ function handleAction(el){
   }
   if(a==='open-product-picker'){
     if(!state.invoiceDraft) return;
+    captureStandaloneInvoiceFields();
     state.productSearch = '';
     openModal({type:'productPicker'});
     return;
